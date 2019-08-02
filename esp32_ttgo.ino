@@ -1,6 +1,7 @@
 
 
 
+#include <ArduinoWebsockets.h>
 
 #include <ESPmDNS.h>
 #include <WiFi.h>
@@ -14,10 +15,14 @@ WiFiMulti WiFiMulti;
 #endif
 
 //#include <WebSocketsClient.h>
-//#include <ArduinoWebsockets.h>
 
 
-//WebSocketsClient webSocket;
+
+//#include <WebSocketsServer.h>
+//#include <WebSocketsClient.h>
+//#include <WebSockets.h>
+//#include <SocketIOclient.h>
+
 
 #include <SparkFunSX1509.h>
   
@@ -112,6 +117,55 @@ void setup() {
 
 }
 
+using namespace websockets;
+WebsocketsClient client;
+
+/*void onMessageCallback( WebsocketsMessage message) {
+    Serial.print("Got Message: ");
+    Serial.println(message.data());
+}
+
+void onEventsCallback(WebsocketsEvent event, String data) {
+    if(event == WebsocketsEvent::ConnectionOpened) {
+        Serial.println("Connnection Opened");
+    } else if(event == WebsocketsEvent::ConnectionClosed) {
+        Serial.println("Connnection Closed");
+    } else if(event == WebsocketsEvent::GotPing) {
+        Serial.println("Got a Ping!");
+    } else if(event == WebsocketsEvent::GotPong) {
+        Serial.println("Got a Pong!");
+    }
+}
+*/
+
+const char *websockets_server_host = "192.168.0.13";
+const int websockets_server_port = 3000;
+
+void connect_ws() 
+{
+      // run callback when messages are received
+    //client.onMessage(onMessageCallback);
+
+    client.onMessage([&](WebsocketsMessage message){
+        OLEDprintf("%s", message.data());
+        //Serial.println(message.data());
+    });
+
+    
+    // run callback when events are occuring
+    //client.onEvent(onEventsCallback);
+
+    // Connect to server
+    client.connect(websockets_server_host, websockets_server_port, "/");
+
+    // Send a message
+    client.send("Hello Server");
+
+    // Send a ping
+    client.ping();
+
+}
+
 uint8_t wifi_status = -1, wifi_status_prev = -1;
 char *wifi_status_str = NULL;
 uint8_t wifi_status_changed(void)
@@ -129,6 +183,7 @@ uint8_t wifi_status_changed(void)
       break;
     case WL_CONNECTED:
       wifi_status_str = "Connected";
+      connect_ws();
       break;
     case WL_CONNECT_FAILED:
       wifi_status_str = "Connect Fail";
@@ -166,5 +221,8 @@ void loop() {
     io.blink(pin, 1000, 500);
 
     pin++;
- } 
+ }
+ //if (wifi_status == WL_CONNECTED)
+ if (client.available())
+    client.poll(); 
 }
