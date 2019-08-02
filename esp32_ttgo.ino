@@ -1,15 +1,22 @@
+
+
+
+
 #include <ESPmDNS.h>
-
-//#include <ArduinoWebsockets.h>
-
 #include <WiFi.h>
-#include <WiFiMulti.h>
 #include <WiFiClientSecure.h>
 
-//#include <WebSocketsClient.h>
-
-
+#ifdef WIFI_MULTI
+#include <WiFiMulti.h>
 WiFiMulti WiFiMulti;
+#else
+
+#endif
+
+//#include <WebSocketsClient.h>
+//#include <ArduinoWebsockets.h>
+
+
 //WebSocketsClient webSocket;
 
 #include <SparkFunSX1509.h>
