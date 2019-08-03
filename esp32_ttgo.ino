@@ -1,9 +1,13 @@
 
+#define DISABLE_OTA
 //#define DISABLE_LEDS
+//#define DISABLE_SWITCHES
 //#define DISABLE_WIFI
+#define DISABLE_PEDALS
+#define DISABLE_WEBSOCKET
 
+#include <ArduinoOTA.h>
 #include <ArduinoWebsockets.h>
-
 #include <ESPmDNS.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -15,18 +19,8 @@ WiFiMulti WiFiMulti;
 
 #endif
 
-//#include <WebSocketsClient.h>
 
-
-
-//#include <WebSocketsServer.h>
-//#include <WebSocketsClient.h>
-//#include <WebSockets.h>
-//#include <SocketIOclient.h>
-
-
-#include <SparkFunSX1509.h>
-  
+#include <SparkFunSX1509.h>  
 
 #include <SH1106.h>
 #include <SSD1306.h>
@@ -41,19 +35,52 @@ WiFiMulti WiFiMulti;
 #include <SSD1306Wire.h>
 #include <SSD1306I2C.h>
 
+#ifndef DISABLE_OTA
+void setup_ota(void)
+{
+    ArduinoOTA
+    .onStart([]() {
+      String type;
+      if (ArduinoOTA.getCommand() == U_FLASH)
+        type = "sketch";
+      else // U_SPIFFS
+        type = "filesystem";
 
+      // NOTE: if updating SPIFFS this would be the place to unmount SPIFFS using SPIFFS.end()
+      Serial.println("Start updating " + type);
+    })
+    .onEnd([]() {
+      Serial.println("\nEnd");
+    })
+    .onProgress([](unsigned int progress, unsigned int total) {
+      Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+    })
+    .onError([](ota_error_t error) {
+      Serial.printf("Error[%u]: ", error);
+      if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
+      else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
+      else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+      else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+      else if (error == OTA_END_ERROR) Serial.println("End Failed");
+    });
+
+  ArduinoOTA.begin();
+}
+#endif
 
 uint8_t ledPin = 16; // Onboard LED reference
 
 const byte PEDAL1_PIN = 36, PEDAL2_PIN = 39;
 
-SSD1306 display(0x3c, 5, 4); // instance for the OLED. Addr, SDA, SCL
+const byte OLED_I2C_ADDRESS = 0x3c, OLED_I2C_SDA = 5, OLED_I2C_SCL = 4;
+
+SSD1306 display(OLED_I2C_ADDRESS, OLED_I2C_SDA, OLED_I2C_SCL);
 
 
-const byte SX1509_LEDS_ADDRESS = 0x3E;  // SX1509 I2C address
-const byte SX1509_SWITCHES_ADDRESS = 0x3F;  // SX1509 I2C address
+const byte SX1509_LEDS_ADDRESS = 0x3E;
+const byte SX1509_SWITCHES_ADDRESS = 0x3F;
 
-SX1509 leds, switches; // Create an SX1509 object to be used throughout
+SX1509 leds, switches;
 
 // SX1509 Pin definitledsn:
 const byte SX1509_LED_PIN = 0; // LED to SX1509's pin 15
@@ -84,9 +111,9 @@ const byte SX1509_I2C_SDA = 17;
 const byte SX1509_I2C_SCL = 16;
 
 
-bool buttonPressed = false;
+bool footswitchesPressed = false;
 void IRAM_ATTR button(void) {
-  buttonPressed = true;
+  footswitchesPressed = true;
 }
 
 void setup_sx1509s(void)
@@ -114,7 +141,6 @@ void setup_sx1509s(void)
     while (1) ; // If we fail to communicate, loop forever.
   }
   switches.clock(INTERNAL_CLOCK_2MHZ);
-  OLEDprint("1");
   for (byte i=0; i<16; i++)
   {
     switches.pinMode(i, INPUT_PULLUP);
@@ -124,13 +150,9 @@ void setup_sx1509s(void)
     //switches.debouncePin(i);
 #endif
   }
-  OLEDprint("2");
   
   pinMode(21, INPUT_PULLUP);
-  OLEDprint("3");
-  attachInterrupt(21, 
-                  button, FALLING);
-  OLEDprint("4");
+  attachInterrupt(21, button, FALLING);
  
   OLEDprint("switches done.");
 #endif
@@ -139,22 +161,32 @@ void setup_sx1509s(void)
 
 }
 
+#ifndef DISABLE_PEDALS
 void setup_pedal(byte pin)
 {
+  OLEDprintf("Pedal %d...", pin);
   adcAttachPin(pin);
-  analogSetClockDiv(1);  
-  adcStart(pin);
+  analogSetClockDiv(1);
+  analogReadResolution(12);
+  analogSetCycles(8);
+  analogSetSamples(1);
+  analogSetAttenuation(ADC_11db);
+  OLEDprintf("Pedal %d", pin);
 }
+#endif
 
 char hostname[10];
 void setup() {
-  pinMode(ledPin, OUTPUT);
   Serial.begin(115200);
 
+  pinMode(ledPin, OUTPUT);
+  
   setup_display();
   setup_sx1509s();
+#ifndef DISABLE_PEDALS
   setup_pedal(PEDAL1_PIN);
   setup_pedal(PEDAL2_PIN);
+#endif
   
 
 #ifndef DISABLE_WIFI
@@ -174,32 +206,11 @@ void setup() {
 using namespace websockets;
 WebsocketsClient client;
 
-/*void onMessageCallback( WebsocketsMessage message) {
-    Serial.print("Got Message: ");
-    Serial.println(message.data());
-}
-
-void onEventsCallback(WebsocketsEvent event, String data) {
-    if(event == WebsocketsEvent::ConnectledsnOpened) {
-        Serial.println("Connnectledsn Opened");
-    } else if(event == WebsocketsEvent::ConnectledsnClosed) {
-        Serial.println("Connnectledsn Closed");
-    } else if(event == WebsocketsEvent::GotPing) {
-        Serial.println("Got a Ping!");
-    } else if(event == WebsocketsEvent::GotPong) {
-        Serial.println("Got a Pong!");
-    }
-}
-*/
-
 const char *websockets_server_host = "192.168.0.13";
 const int websockets_server_port = 3000;
 
 void connect_ws() 
 {
-      // run callback when messages are received
-    //client.onMessage(onMessageCallback);
-
     client.onMessage([&](WebsocketsMessage message){
         OLEDprintf("%s", message.data());
         //Serial.println(message.data());
@@ -217,7 +228,6 @@ void connect_ws()
 
     // Send a ping
     client.ping();
-
 }
 
 uint8_t wifi_status = -1, wifi_status_prev = -1;
@@ -237,7 +247,12 @@ uint8_t wifi_status_changed(void)
       break;
     case WL_CONNECTED:
       wifi_status_str = "Connected";
+#ifndef DISABLE_OTA
+      setup_ota();
+#endif
+#ifndef DISABLE_WEBSOCKET
       connect_ws();
+#endif
       break;
     case WL_CONNECT_FAILED:
       wifi_status_str = "Connect Fail";
@@ -258,21 +273,81 @@ uint8_t wifi_status_changed(void)
 
 //WebsocketsClient client;
 
-void pedal_poll(byte pin)
+#ifndef DISABLE_PEDALS
+const byte pedalPins[] = { PEDAL1_PIN, PEDAL2_PIN };
+byte pedalPinIndex = 0;
+byte pedalPin = -1;
+void pedals_poll(void)
 {
-  if (!adcBusy(pin))
+  if (pedalPin == -1)
   {
-    uint16_t val = adcEnd(pin);
+      pedalPin = pedalPins[pedalPinIndex];
+      adcStart(pedalPin);
+      return;
+  }
+  
+  if (!adcBusy(pedalPin))
+  {
+    uint16_t val = adcEnd(pedalPin);
     Serial.print("pedal ");
-    Serial.print(pin);
+    Serial.print(pedalPin);
     Serial.print(": ");
     Serial.println(val);
-    adcStart(pin);
+    ++pedalPinIndex;
+    pedalPinIndex %= 2;
+    pedalPin = pedalPins[pedalPinIndex]; 
+    adcStart(pedalPin);
+  }
+}
+#endif
+
+const char *footswitchMappedNames[] = {
+  "FS_UP", //    1
+  "FS_7",   //    2
+  "FS_10",  //    4
+   NULL,   //    8
+   NULL,   //   10
+  "FS_9",   //   20
+  "FS_6",   //   40
+  "FS_8",   //   80
+  "FS_3",   //  100
+  "FS_5",   //  200
+  "FS_4",   //  400
+  "FS_1",   //  800
+   NULL,   // 1000
+   NULL,   // 2000
+  "FS_DOWN",//4000
+  "FS_2",   // 8000   
+};
+void footswitches_poll(void)
+{
+  if (!footswitchesPressed)
+    return;
+    
+    footswitchesPressed = false;
+
+  unsigned int val = switches.readPins() ^ 0xffff;
+  OLEDprint("");
+  //OLEDprintf("val=%x ", val);
+  for (byte i=0; val; val >>= 1, i++)
+  {
+    if (val%2) {
+      /*if (buttonsMappedNames[i])
+      {OLEDprintf("%s", buttonsMappedNames[i]);
+      }else{
+      OLEDprintf("???");}*/
+    //OLEDprintf(" ( %d %d )\n", val, i);
+    OLEDprintf("%s\n", footswitchMappedNames[i]);
+    }  
   }
 }
 
 byte pin = 0;
 void loop() {
+#ifdef DISABLE_OTA
+  ArduinoOTA.handle();
+#endif
+
 #ifndef DISABLE_WIFI
 #ifdef WIFI_MULTI
   wifi_status = WiFiMulti.run();
@@ -294,46 +369,12 @@ void loop() {
  }
 #endif
 
-/*
-  uint16_t analog1 = analogRead(36);
-  Serial.println(analog1);
-
-  uint16_t analog2 = analogRead(39);
-  Serial.println(analog2);
-*/  
-
-  pedal_poll(PEDAL1_PIN);
-  pedal_poll(PEDAL2_PIN);
-  
-//buttonPressed =  true;
-if (buttonPressed) {
-  buttonPressed = false;
-#if 0
- byte val, i;
- char d[32];
- for (i=0; i<8; i++)
- {
-   val = switches.digitalRead(i);
-   d[i] = val ? '-': 'X';
-   //Serial.print(val);
- }
- d[i] = '\n';
- for (i=8; i<16; i++)
- {
-   val = switches.digitalRead(i);
-   d[i+1] = val ? '-': 'X';
-   //Serial.print(val);
- }
- d[i+1] = '\0'; 
-  //Serial.println("");
-  OLEDprintf(d);
-#else
-  unsigned int val = switches.readPins() ^ 0xffff;
-  OLEDprintf("%x", val);
+#ifndef DISABLE_PEDALS
+  pedals_poll();
 #endif
- }
+  footswitches_poll();
+  
  
- //if (wifi_status == WL_CONNECTED)
  if (client.available())
     client.poll(); 
 }
