@@ -4,6 +4,7 @@
 //#define DISABLE_SWITCHES
 //#define DISABLE_WIFI
 //#define DISABLE_PEDALS
+//#define DISABLE_FOOTSWITCHES
 #define DISABLE_WEBSOCKET
 
 #include <ArduinoOTA.h>
@@ -111,10 +112,12 @@ const byte SX1509_I2C_SDA = 17;
 const byte SX1509_I2C_SCL = 16;
 
 
+#ifndef DISABLE_FOOTSWITCHES
 bool footswitchesPressed = false;
 void IRAM_ATTR button(void) {
   footswitchesPressed = true;
 }
+#endif
 
 void setup_sx1509s(void)
 {
@@ -134,7 +137,7 @@ void setup_sx1509s(void)
 
 #endif
 
-#ifndef SWITCHES
+#ifndef DISABLE_FOOTSWITCHES
   switches.use_wire(sxwire);
   if (!switches.begin(SX1509_SWITCHES_ADDRESS))
   {
@@ -275,6 +278,8 @@ uint8_t wifi_status_changed(void)
 
 #ifndef DISABLE_PEDALS
 const byte pedalPins[] = { PEDAL1_PIN, PEDAL2_PIN };
+byte pedalValues[sizeof(pedalPins)][10] = {-1};
+byte pedalValueIndex[sizeof(pedalPins)] = {0};
 //const byte pedalPins[] = { PEDAL1_PIN };
 byte pedalPinIndex = 0;
 byte pedalPin = -1;
@@ -291,6 +296,9 @@ void pedals_poll(void)
   if (!adcBusy(pedalPin))
   {
     uint16_t val = adcEnd(pedalPin);
+    pedalValues[pedalPinIndex][pedalValueIndex[pedalPinIndex]++] = val;
+    pedalPinIndex %= sizeof(pedalValues[0]);
+
     sprintf(pbuff, "pedal %d: %x", pedalPin, val);
     Serial.println(pbuff);
     /*Serial.print("pedal ");
@@ -305,6 +313,7 @@ void pedals_poll(void)
 }
 #endif
 
+#ifndef DISABLE_FOOTSWITCHES
 const char *footswitchMappedNames[] = {
   "FS_UP", //    1
   "FS_7",   //    2
@@ -345,6 +354,7 @@ void footswitches_poll(void)
     }  
   }
 }
+#endif
 
 byte pin = 0;
 void loop() {
@@ -376,7 +386,9 @@ void loop() {
 #ifndef DISABLE_PEDALS
   pedals_poll();
 #endif
+#ifndef DISABLE_FOOTSWITCHES
   footswitches_poll();
+#endif
   
  
  if (client.available())
