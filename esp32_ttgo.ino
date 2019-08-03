@@ -1,5 +1,6 @@
 
-
+//#define DISABLE_LEDS
+//#define DISABLE_WIFI
 
 #include <ArduinoWebsockets.h>
 
@@ -44,13 +45,17 @@ WiFiMulti WiFiMulti;
 
 uint8_t ledPin = 16; // Onboard LED reference
 
+const byte PEDAL1_PIN = 36, PEDAL2_PIN = 39;
+
 SSD1306 display(0x3c, 5, 4); // instance for the OLED. Addr, SDA, SCL
 
 
-const byte SX1509_ADDRESS = 0x3E;  // SX1509 I2C address
-SX1509 io; // Create an SX1509 object to be used throughout
+const byte SX1509_LEDS_ADDRESS = 0x3E;  // SX1509 I2C address
+const byte SX1509_SWITCHES_ADDRESS = 0x3F;  // SX1509 I2C address
 
-// SX1509 Pin definition:
+SX1509 leds, switches; // Create an SX1509 object to be used throughout
+
+// SX1509 Pin definitledsn:
 const byte SX1509_LED_PIN = 0; // LED to SX1509's pin 15
 
 void setup_display()
@@ -78,22 +83,67 @@ void OLEDprint(char *s)
 const byte SX1509_I2C_SDA = 17;
 const byte SX1509_I2C_SCL = 16;
 
-void setup_sx1509(void)
+
+bool buttonPressed = false;
+void IRAM_ATTR button(void) {
+  buttonPressed = true;
+}
+
+void setup_sx1509s(void)
 {
-  OLEDprint("leds...");
+  OLEDprint("sx1509s...");
   TwoWire *sxwire = new TwoWire(1);
+  
   sxwire->begin(SX1509_I2C_SDA, SX1509_I2C_SCL, 100000);
-  io.use_wire(sxwire);
-  if (!io.begin(SX1509_ADDRESS))
+
+#ifndef DISABLE_LEDS
+  leds.use_wire(sxwire);
+  if (!leds.begin(SX1509_LEDS_ADDRESS))
   {
     while (1) ; // If we fail to communicate, loop forever.
   }
-
-  
+  leds.clock(INTERNAL_CLOCK_2MHZ);  
   OLEDprint("leds done.");
-io.clock(INTERNAL_CLOCK_2MHZ);  
+
+#endif
+
+#ifndef SWITCHES
+  switches.use_wire(sxwire);
+  if (!switches.begin(SX1509_SWITCHES_ADDRESS))
+  {
+    while (1) ; // If we fail to communicate, loop forever.
+  }
+  switches.clock(INTERNAL_CLOCK_2MHZ);
+  OLEDprint("1");
+  for (byte i=0; i<16; i++)
+  {
+    switches.pinMode(i, INPUT_PULLUP);
+    switches.enableInterrupt(i, CHANGE);
+#ifndef DISABLE_DEBOUNCE
+    //switches.debounceTime(32);
+    //switches.debouncePin(i);
+#endif
+  }
+  OLEDprint("2");
+  
+  pinMode(21, INPUT_PULLUP);
+  OLEDprint("3");
+  attachInterrupt(21, 
+                  button, FALLING);
+  OLEDprint("4");
+ 
+  OLEDprint("switches done.");
+#endif
+  
 
 
+}
+
+void setup_pedal(byte pin)
+{
+  adcAttachPin(pin);
+  analogSetClockDiv(1);  
+  adcStart(pin);
 }
 
 char hostname[10];
@@ -102,8 +152,12 @@ void setup() {
   Serial.begin(115200);
 
   setup_display();
-  setup_sx1509();
+  setup_sx1509s();
+  setup_pedal(PEDAL1_PIN);
+  setup_pedal(PEDAL2_PIN);
+  
 
+#ifndef DISABLE_WIFI
 #ifdef WIFI_MULTI
   WiFiMulti.addAP("b2desk", "this is b2!");
 #else
@@ -114,7 +168,7 @@ void setup() {
   WiFi.begin("b2desk", "this is b2!");
   MDNS.begin(hostname);
 #endif
-
+#endif
 }
 
 using namespace websockets;
@@ -126,10 +180,10 @@ WebsocketsClient client;
 }
 
 void onEventsCallback(WebsocketsEvent event, String data) {
-    if(event == WebsocketsEvent::ConnectionOpened) {
-        Serial.println("Connnection Opened");
-    } else if(event == WebsocketsEvent::ConnectionClosed) {
-        Serial.println("Connnection Closed");
+    if(event == WebsocketsEvent::ConnectledsnOpened) {
+        Serial.println("Connnectledsn Opened");
+    } else if(event == WebsocketsEvent::ConnectledsnClosed) {
+        Serial.println("Connnectledsn Closed");
     } else if(event == WebsocketsEvent::GotPing) {
         Serial.println("Got a Ping!");
     } else if(event == WebsocketsEvent::GotPong) {
@@ -204,8 +258,22 @@ uint8_t wifi_status_changed(void)
 
 //WebsocketsClient client;
 
+void pedal_poll(byte pin)
+{
+  if (!adcBusy(pin))
+  {
+    uint16_t val = adcEnd(pin);
+    Serial.print("pedal ");
+    Serial.print(pin);
+    Serial.print(": ");
+    Serial.println(val);
+    adcStart(pin);
+  }
+}
+
 byte pin = 0;
 void loop() {
+#ifndef DISABLE_WIFI
 #ifdef WIFI_MULTI
   wifi_status = WiFiMulti.run();
 #else
@@ -214,14 +282,57 @@ void loop() {
  
   if (wifi_status != wifi_status_prev)
     wifi_status_changed();
+#endif
 
+#ifndef DISABLE_LEDS
   if (pin < 16) {
-    io.pinMode(pin, OUTPUT); // Set LED pin to OUTPUT
+    leds.pinMode(pin, OUTPUT); // Set LED pin to OUTPUT
     // Blink the LED pin -- ~1000 ms LOW, ~500 ms HIGH:
-    io.blink(pin, 1000, 500);
+    leds.blink(pin, 1000, 500);
 
     pin++;
  }
+#endif
+
+/*
+  uint16_t analog1 = analogRead(36);
+  Serial.println(analog1);
+
+  uint16_t analog2 = analogRead(39);
+  Serial.println(analog2);
+*/  
+
+  pedal_poll(PEDAL1_PIN);
+  pedal_poll(PEDAL2_PIN);
+  
+//buttonPressed =  true;
+if (buttonPressed) {
+  buttonPressed = false;
+#if 0
+ byte val, i;
+ char d[32];
+ for (i=0; i<8; i++)
+ {
+   val = switches.digitalRead(i);
+   d[i] = val ? '-': 'X';
+   //Serial.print(val);
+ }
+ d[i] = '\n';
+ for (i=8; i<16; i++)
+ {
+   val = switches.digitalRead(i);
+   d[i+1] = val ? '-': 'X';
+   //Serial.print(val);
+ }
+ d[i+1] = '\0'; 
+  //Serial.println("");
+  OLEDprintf(d);
+#else
+  unsigned int val = switches.readPins() ^ 0xffff;
+  OLEDprintf("%x", val);
+#endif
+ }
+ 
  //if (wifi_status == WL_CONNECTED)
  if (client.available())
     client.poll(); 
