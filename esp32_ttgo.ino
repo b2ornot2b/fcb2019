@@ -3,7 +3,7 @@
 //#define DISABLE_LEDS
 //#define DISABLE_SWITCHES
 //#define DISABLE_WIFI
-#define DISABLE_PEDALS
+//#define DISABLE_PEDALS
 #define DISABLE_WEBSOCKET
 
 #include <ArduinoOTA.h>
@@ -275,8 +275,10 @@ uint8_t wifi_status_changed(void)
 
 #ifndef DISABLE_PEDALS
 const byte pedalPins[] = { PEDAL1_PIN, PEDAL2_PIN };
+//const byte pedalPins[] = { PEDAL1_PIN };
 byte pedalPinIndex = 0;
 byte pedalPin = -1;
+char pbuff[32];
 void pedals_poll(void)
 {
   if (pedalPin == -1)
@@ -289,12 +291,14 @@ void pedals_poll(void)
   if (!adcBusy(pedalPin))
   {
     uint16_t val = adcEnd(pedalPin);
-    Serial.print("pedal ");
+    sprintf(pbuff, "pedal %d: %x", pedalPin, val);
+    Serial.println(pbuff);
+    /*Serial.print("pedal ");
     Serial.print(pedalPin);
     Serial.print(": ");
-    Serial.println(val);
+    Serial.println(val);*/
     ++pedalPinIndex;
-    pedalPinIndex %= 2;
+    pedalPinIndex %= sizeof(pedalPins);
     pedalPin = pedalPins[pedalPinIndex]; 
     adcStart(pedalPin);
   }
