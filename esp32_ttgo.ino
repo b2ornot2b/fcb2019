@@ -1,17 +1,20 @@
 
 #define DISABLE_OTA
 //#define DISABLE_LEDS
-//#define DISABLE_SWITCHES
-//#define DISABLE_WIFI
-//#define DISABLE_PEDALS
 //#define DISABLE_FOOTSWITCHES
-#define DISABLE_WEBSOCKET
+//#define DISABLE_DEBOUNCE
+//#define DISABLE_WIFI
+#define DISABLE_PEDALS
+//#define DISABLE_WEBSOCKET
+//#define DEBUG_WEBSOCKET
 
 #include <ArduinoOTA.h>
 #include <ArduinoWebsockets.h>
 #include <ESPmDNS.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
+
+#include <WString.h>
 
 #ifdef WIFI_MULTI
 #include <WiFiMulti.h>
@@ -83,8 +86,10 @@ const byte SX1509_SWITCHES_ADDRESS = 0x3F;
 
 SX1509 leds, switches;
 
+const byte FOOTSWITCH_DEBOUNCE_TIME = 8;
+
 // SX1509 Pin definitledsn:
-const byte SX1509_LED_PIN = 0; // LED to SX1509's pin 15
+//const byte SX1509_LED_PIN = 0; // LED to SX1509's pin 15
 
 void setup_display()
 {
@@ -112,12 +117,10 @@ const byte SX1509_I2C_SDA = 17;
 const byte SX1509_I2C_SCL = 16;
 
 
-#ifndef DISABLE_FOOTSWITCHES
 bool footswitchesPressed = false;
 void IRAM_ATTR button(void) {
   footswitchesPressed = true;
 }
-#endif
 
 void setup_sx1509s(void)
 {
@@ -137,7 +140,7 @@ void setup_sx1509s(void)
 
 #endif
 
-#ifndef DISABLE_FOOTSWITCHES
+#ifndef SWITCHES
   switches.use_wire(sxwire);
   if (!switches.begin(SX1509_SWITCHES_ADDRESS))
   {
@@ -149,10 +152,12 @@ void setup_sx1509s(void)
     switches.pinMode(i, INPUT_PULLUP);
     switches.enableInterrupt(i, CHANGE);
 #ifndef DISABLE_DEBOUNCE
-    //switches.debounceTime(32);
-    //switches.debouncePin(i);
+    switches.debouncePin(i);
 #endif
   }
+#ifndef DISABLE_DEBOUNCE
+    switches.debounceTime(FOOTSWITCH_DEBOUNCE_TIME);
+#endif
   
   pinMode(21, INPUT_PULLUP);
   attachInterrupt(21, button, FALLING);
@@ -172,7 +177,7 @@ void setup_pedal(byte pin)
   analogSetClockDiv(1);
   analogReadResolution(12);
   analogSetCycles(8);
-  analogSetSamples(1);
+  analogSetSamples(64);
   analogSetAttenuation(ADC_11db);
   OLEDprintf("Pedal %d", pin);
 }
@@ -206,32 +211,103 @@ void setup() {
 #endif
 }
 
+#ifndef DISABLE_WIFI
+#ifndef DISABLE_WEBSOCKETS
 using namespace websockets;
 WebsocketsClient client;
 
 const char *websockets_server_host = "192.168.0.13";
 const int websockets_server_port = 3000;
 
+
+typedef enum {
+  WS_DISABLED,
+  WS_INIT,
+  WS_CONNECT,
+  WS_CONNECTED,
+  WS_DISCONNECTED
+} ws_state_t;
+ws_state_t ws_state = WS_DISABLED;
 void connect_ws() 
 {
-    client.onMessage([&](WebsocketsMessage message){
+  ws_state = WS_INIT;
+}
+
+void onEventsCallback(websockets::WebsocketsEvent event, String data) {
+    if(event == WebsocketsEvent::ConnectionOpened) {
+        Serial.println("Connnection Opened");
+    } else if(event == WebsocketsEvent::ConnectionClosed) {
+        Serial.println("Connnection Closed");
+        ws_state = WS_DISCONNECTED;
+    } else if(event == WebsocketsEvent::GotPing) {
+#ifdef DEBUG_WEBSOCKET
+        Serial.println("Got a Ping!");
+#endif
+    } else if(event == WebsocketsEvent::GotPong) {
+#ifdef DEBUG_WEBSOCKET
+        Serial.println("Got a Pong!");
+#endif
+    }
+}
+
+const uint64_t WS_RECONNECT_TIME = 500, WS_PING_INTERVAL = 1000;
+uint64_t lastPing = 0, connectAt = 0;
+void ws_loop()
+{
+ 
+  switch (ws_state)
+  {
+    case WS_DISABLED:
+      return;
+    case WS_INIT: 
+      client.onEvent(onEventsCallback);
+      client.onMessage([&](WebsocketsMessage message){
         OLEDprintf("%s", message.data());
         //Serial.println(message.data());
-    });
-
-    
+      });   
+      ws_state = WS_CONNECT; 
     // run callback when events are occuring
-    //client.onEvent(onEventsCallback);
-
+      break;
+    case WS_CONNECT:
     // Connect to server
-    client.connect(websockets_server_host, websockets_server_port, "/");
-
+    if (millis() < connectAt)
+       break;
+    if (client.connect(websockets_server_host, websockets_server_port, "/"))
+    {
+      ws_state = WS_CONNECTED;
+      OLEDprintf("ws\nconnected\n");
+      lastPing = millis();
+    }
+    else 
+    {
+      ws_state = WS_DISCONNECTED;
+      //OLEDprintf("ws\ndisconnected\n");
+    }
+    break;
+    
     // Send a message
-    client.send("Hello Server");
+    //client.send("FCB2.019 init");
 
     // Send a ping
-    client.ping();
+    //client.ping();
+    case WS_CONNECTED:
+       if ((millis() - lastPing) > WS_PING_INTERVAL)
+       {
+          client.ping();
+          lastPing = millis();
+       }
+       if (client.available())
+         client.poll(); 
+       break;
+    case WS_DISCONNECTED:
+      ws_state = WS_CONNECT;
+      connectAt = millis() + WS_RECONNECT_TIME;
+      break;
+    default:
+      break;
+  }
 }
+#endif
 
 uint8_t wifi_status = -1, wifi_status_prev = -1;
 char *wifi_status_str = NULL;
@@ -273,17 +349,14 @@ uint8_t wifi_status_changed(void)
   OLEDprintf("%s", wifi_status_str);
   wifi_status_prev = wifi_status;
 }
-
+#endif
 //WebsocketsClient client;
 
 #ifndef DISABLE_PEDALS
 const byte pedalPins[] = { PEDAL1_PIN, PEDAL2_PIN };
-byte pedalValues[sizeof(pedalPins)][10] = {-1};
-byte pedalValueIndex[sizeof(pedalPins)] = {0};
-//const byte pedalPins[] = { PEDAL1_PIN };
+//const byte pedalPins[] = { PEDAL2_PIN };
 byte pedalPinIndex = 0;
 byte pedalPin = -1;
-char pbuff[32];
 void pedals_poll(void)
 {
   if (pedalPin == -1)
@@ -296,15 +369,10 @@ void pedals_poll(void)
   if (!adcBusy(pedalPin))
   {
     uint16_t val = adcEnd(pedalPin);
-    pedalValues[pedalPinIndex][pedalValueIndex[pedalPinIndex]++] = val;
-    pedalPinIndex %= sizeof(pedalValues[0]);
-
-    sprintf(pbuff, "pedal %d: %x", pedalPin, val);
-    Serial.println(pbuff);
-    /*Serial.print("pedal ");
+    Serial.print("pedal ");
     Serial.print(pedalPin);
     Serial.print(": ");
-    Serial.println(val);*/
+    Serial.println(val);
     ++pedalPinIndex;
     pedalPinIndex %= sizeof(pedalPins);
     pedalPin = pedalPins[pedalPinIndex]; 
@@ -332,6 +400,18 @@ const char *footswitchMappedNames[] = {
   "FS_DOWN",//4000
   "FS_2",   // 8000   
 };
+
+void onFootswitchDown(const char *fsname)
+{
+  OLEDprintf("%s\ndown\n", fsname);
+}
+
+void onFootswitchUp(const char *fsname)
+{
+  OLEDprintf("%s\nup\n", fsname);
+}
+
+unsigned int footswitchState = 0;
 void footswitches_poll(void)
 {
   if (!footswitchesPressed)
@@ -340,19 +420,17 @@ void footswitches_poll(void)
     footswitchesPressed = false;
 
   unsigned int val = switches.readPins() ^ 0xffff;
-  OLEDprint("");
-  //OLEDprintf("val=%x ", val);
-  for (byte i=0; val; val >>= 1, i++)
+  
+  for (byte i=0; i<16; i++) 
   {
-    if (val%2) {
-      /*if (buttonsMappedNames[i])
-      {OLEDprintf("%s", buttonsMappedNames[i]);
-      }else{
-      OLEDprintf("???");}*/
-    //OLEDprintf(" ( %d %d )\n", val, i);
-    OLEDprintf("%s\n", footswitchMappedNames[i]);
-    }  
+     bool fsPrevState = footswitchState & (0x01 << i);
+     bool fsState = val & (0x01 << i);
+     if (fsPrevState==false && fsState==true)
+       onFootswitchDown(footswitchMappedNames[i]);
+     else if (fsPrevState==true && fsState==false)
+       onFootswitchUp(footswitchMappedNames[i]);     
   }
+  footswitchState = val;
 }
 #endif
 
@@ -389,8 +467,8 @@ void loop() {
 #ifndef DISABLE_FOOTSWITCHES
   footswitches_poll();
 #endif
-  
- 
- if (client.available())
-    client.poll(); 
+
+#ifndef DISABLE_WEBSOCKETS
+  ws_loop();
+#endif
 }
