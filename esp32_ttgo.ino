@@ -250,6 +250,11 @@ void onEventsCallback(websockets::WebsocketsEvent event, String data) {
     }
 }
 
+void onMessageCallback(websockets::WebsocketsMessage message) {
+    Serial.print("Got Message: ");
+    Serial.println(message.data());
+}
+
 const uint64_t WS_RECONNECT_TIME = 500, WS_PING_INTERVAL = 1000;
 uint64_t lastPing = 0, connectAt = 0;
 void ws_loop()
@@ -261,10 +266,11 @@ void ws_loop()
       return;
     case WS_INIT: 
       client.onEvent(onEventsCallback);
-      client.onMessage([&](WebsocketsMessage message){
-        OLEDprintf("%s", message.data());
-        //Serial.println(message.data());
-      });   
+      client.onMessage(onMessageCallback);
+      /*client.onMessage([&](WebsocketsMessage message){
+        //OLEDprintf("%s", message.data());
+        Serial.println(message.data());
+      });*/   
       ws_state = WS_CONNECT; 
     // run callback when events are occuring
       break;
@@ -307,6 +313,25 @@ void ws_loop()
       break;
   }
 }
+
+typedef enum {
+  FC_INIT,
+  FC_INIT_ACK,
+} fcb2019_protocol_state_t;
+fcb2019_protocol_state_t protocol_state = FC_INIT;
+void fcb2019_loop()
+{
+  switch (protocol_state)
+  {
+    case FC_INIT:
+      client.send("FCB2.019 init");
+      protocol_state = FC_INIT_ACK;
+      break;
+    case FC_INIT_ACK:
+      break;
+  }
+}
+
 #endif
 
 uint8_t wifi_status = -1, wifi_status_prev = -1;
@@ -445,8 +470,7 @@ void loop() {
   wifi_status = WiFiMulti.run();
 #else
   wifi_status = WiFi.status();
-#endif        
- 
+#endif 
   if (wifi_status != wifi_status_prev)
     wifi_status_changed();
 #endif
@@ -464,6 +488,7 @@ void loop() {
 #ifndef DISABLE_PEDALS
   pedals_poll();
 #endif
+
 #ifndef DISABLE_FOOTSWITCHES
   footswitches_poll();
 #endif
