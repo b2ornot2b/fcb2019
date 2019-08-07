@@ -459,13 +459,9 @@ void footswitches_poll(void)
 }
 #endif
 
-byte pin = 0;
-void loop() {
-#ifdef DISABLE_OTA
-  ArduinoOTA.handle();
-#endif
-
 #ifndef DISABLE_WIFI
+void wifi_loop()
+{
 #ifdef WIFI_MULTI
   wifi_status = WiFiMulti.run();
 #else
@@ -473,16 +469,34 @@ void loop() {
 #endif 
   if (wifi_status != wifi_status_prev)
     wifi_status_changed();
+}
 #endif
 
 #ifndef DISABLE_LEDS
+void leds_loop(void)
+{
+  static byte pin = 0;
+
   if (pin < 16) {
     leds.pinMode(pin, OUTPUT); // Set LED pin to OUTPUT
     // Blink the LED pin -- ~1000 ms LOW, ~500 ms HIGH:
     leds.blink(pin, 1000, 500);
-
     pin++;
  }
+}
+#endif
+
+void loop() {
+#ifdef DISABLE_OTA
+  ArduinoOTA.handle();
+#endif
+
+#ifndef DISABLE_WIFI
+  wifi_loop();
+#endif
+
+#ifndef DISABLE_LEDS
+  leds_loop();
 #endif
 
 #ifndef DISABLE_PEDALS
