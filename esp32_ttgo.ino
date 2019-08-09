@@ -1,17 +1,17 @@
 
 #define DISABLE_OTA
-//#define DISABLE_LEDS
+#define DISABLE_LEDS
 //#define DISABLE_FOOTSWITCHES
 //#define DISABLE_DEBOUNCE
 //#define DISABLE_WIFI
-#define DISABLE_PEDALS
+//#define DISABLE_PEDALS
 //#define DISABLE_WEBSOCKET
 //#define DEBUG_WEBSOCKET
 
 #ifndef DISABLE_OTA
 #include <ArduinoOTA.h>
 #endif
-#include <ArduinoWebsockets.h>  
+#include <ArduinoWebsockets.h>
 #include <ESPmDNS.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -25,23 +25,12 @@ WiFiMulti WiFiMulti;
 
 #endif
 
-
 #include <SparkFunSX1509.h>
 
-//#include <SH1106.h>
 #include <SSD1306.h>
-//#include <SH1106Spi.h>
-//#include <OLEDDisplayUi.h>
-//#include <SH1106Wire.h>
-//#include <SSD1306Brzo.h>
 #include <OLEDDisplay.h>
-//#include <SH1106Brzo.h>
 #include <OLEDDisplayFonts.h>
-//#include <SSD1306Spi.h>
-//#include <SSD1306Wire.h>
 #include <SSD1306I2C.h>
-
-
 
 #include <Preferences.h>
 
@@ -52,10 +41,11 @@ WiFiMulti WiFiMulti;
 #include <BLEUtils.h>
 #include <BLEServer.h>
 
+#include <Statistic.h>
 
 class BLEPreferences {
   private:
-    const char * serviceUUID = "35d3d8f4-c1d8-4018-8f51-42d85c2f7e26";
+    const char * serviceUUID = "d3a591b7-a053-4db9-bcf3-e3fb035c40d4";
     BLEServer * m_ble_server;
     BLEService * m_ble_service;
 
@@ -75,9 +65,9 @@ class BLEPreferences {
         String m_name;
         String m_value;
         SettingChangedCallback m_cb;
-        
 
-        Setting(String uuid, String name, String description, String value, SettingChangedCallback cb=NULL) :
+
+        Setting(String uuid, String name, String description, String value, SettingChangedCallback cb = NULL) :
           m_uuid(uuid),
           m_name(name),
           m_description(description),
@@ -193,7 +183,7 @@ class BLEPreferences {
       Serial.print(name);
       Serial.print("=");
       Serial.println(ret);
-      
+
       return ret;
     }
 };
@@ -331,17 +321,7 @@ void setup_sx1509s(void)
 }
 
 #ifndef DISABLE_PEDALS
-void setup_pedal(byte pin)
-{
-  OLEDprintf("Pedal %d...", pin);
-  adcAttachPin(pin);
-  /*analogSetClockDiv(1);
-  analogReadResolution(12);
-  analogSetCycles(8);
-  analogSetSamples(64);
-  analogSetAttenuation(ADC_11db);
-  */OLEDprintf("Pedal %d", pin);
-}
+
 #endif
 
 #ifndef DISABLE_WIFI
@@ -511,29 +491,64 @@ uint8_t wifi_status_changed(void)
 //WebsocketsClient client;
 
 #ifndef DISABLE_PEDALS
-const byte pedalPins[] = { PEDAL1_PIN, PEDAL2_PIN };
-//const byte pedalPins[] = { PEDAL2_PIN };
-byte pedalPinIndex = 0;
-byte pedalPin = -1;h
-void pedals_poll(void)
+const byte pedalPins[] = { PEDAL2_PIN, PEDAL1_PIN };
+byte pedalIdx = 255;
+Statistic pedalStats[2];
+
+void setup_pedals(void)
 {
-  if (pedalPin == -1)
+  analogReadResolution(12);
+  //  analogSetSamples(64);
+  //analogSetCycles(255);
+
+  setup_pedal(PEDAL1_PIN);
+  setup_pedal(PEDAL2_PIN);
+
+}
+
+void setup_pedal(byte pin)
+{
+  OLEDprintf("Pedal %d...", pin);
+  adcAttachPin(pin);
+
+  /*analogSetClockDiv(1);
+    ianalogSetCycles(8);
+    analogSetSamples(64);
+    analogSetAttenuation(ADC_11db);
+  */OLEDprintf("Pedal %d", pin);
+}
+
+void pedals_loop(void)
+{
+  static byte pedalPin;
+
+  if (pedalIdx == 255)
   {
-    pedalPin = pedalPins[pedalPinIndex];
+    pedalIdx = 0;
+    pedalPin = pedalPins[pedalIdx];
+    pedalStats[pedalIdx].clear();
     adcStart(pedalPin);
     return;
-  }y
+  }
 
   if (!adcBusy(pedalPin))
   {
     uint16_t val = adcEnd(pedalPin);
-    Serial.print("pedal ");
-    Serial.print(pedalPin);
-    Serial.print(": ");
-    Serial.println(val);
-    ++pedalPinIndex;
-    pedalPinIndex %= sizeof(pedalPins);
-    pedalPin = pedalPins[pedalPinIndex];
+    pedalStats[pedalIdx].add(val);
+
+    if (pedalStats[pedalIdx].count() > 127)
+    {
+
+      Serial.print("pedal ");
+      Serial.print(pedalIdx);
+      Serial.print(": ");
+      Serial.println((uint16_t)pedalStats[pedalIdx].average());
+      pedalStats[pedalIdx].clear();
+    }
+
+    ++pedalIdx;
+    pedalIdx %= sizeof(pedalPins);
+    pedalPin = pedalPins[pedalIdx];
     adcStart(pedalPin);
   }
 }
@@ -570,7 +585,7 @@ void onFootswitchUp(const char *fsname)
 }
 
 unsigned int footswitchState = 0;
-void footswitches_poll(void)
+void footswitches_loop(void)
 {
   if (!footswitchesPressed)
     return;
@@ -637,7 +652,7 @@ void setup_wifi(BLEPreferences *prefs)
   const char *hname = strdup(prefs->getValue("hostname").c_str());
 
   OLEDprintf("wifi=%s\n%s", ssid, password);
-  
+
 #ifndef DISABLE_WIFI
 #ifdef WIFI_MULTI
   WiFiMulti.addAP(ssid, password);
@@ -649,14 +664,14 @@ void setup_wifi(BLEPreferences *prefs)
   WiFi.begin(ssid, password);
   MDNS.begin(hostname);
 #endif
-#endif  
+#endif
 }
 
 void setup() {
   Serial.begin(115200);
 
   Serial.println("fcb2019");
-  
+
   pinMode(ledPin, OUTPUT);
 
   BLEPreferences xprefs("fcb2019");
@@ -668,13 +683,12 @@ void setup() {
 
   setup_display();
   setup_wifi(&xprefs);
-  
+
   setup_sx1509s();
 #ifndef DISABLE_PEDALS
-  setup_pedal(PEDAL1_PIN);
-  setup_pedal(PEDAL2_PIN);
+  setup_pedals();
 #endif
-  
+
 
 }
 
@@ -692,11 +706,11 @@ void loop() {
 #endif
 
 #ifndef DISABLE_PEDALS
-  pedals_poll();
+  pedals_loop();
 #endif
 
 #ifndef DISABLE_FOOTSWITCHES
-  footswitches_poll();
+  footswitches_loop();
 #endif
 
 #ifndef DISABLE_WEBSOCKETS
