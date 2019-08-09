@@ -491,96 +491,109 @@ uint8_t wifi_status_changed(void)
 //WebsocketsClient client;
 
 #ifndef DISABLE_PEDALS
-const byte pedalPins[] = { PEDAL2_PIN, PEDAL1_PIN };
-byte pedalIdx = 255;
-Statistic pedalStats[2];
-
-void setup_pedals(void)
+class Pedals
 {
-  analogReadResolution(12);
-  //  analogSetSamples(64);
-  //analogSetCycles(255);
+  private:
+    const byte sampleCount = 63;
+    const byte sensitivity = 3; // Lower is more sensitive
+    const byte pedalPins[2];
+    byte pedalPin;
+    byte pedalIdx = 255;
+    uint16_t prevVal[2];
 
-  setup_pedal(PEDAL1_PIN);
-  setup_pedal(PEDAL2_PIN);
+    Statistic pedalStats[2];
+    Statistic pedalCalibStats[2];
 
-}
 
-void setup_pedal(byte pin)
-{
-  OLEDprintf("Pedal %d...", pin);
-  adcAttachPin(pin);
-
-  /*analogSetClockDiv(1);
-    ianalogSetCycles(8);
-    analogSetSamples(64);
-    analogSetAttenuation(ADC_11db);
-  */OLEDprintf("Pedal %d", pin);
-}
-
-Statistic pedalCalibStats[2];
-void pedals_loop(void)
-{
-  static byte pedalPin;
-
-  if (pedalIdx == 255)
-  {
-    pedalIdx = 0;
-    pedalPin = pedalPins[pedalIdx];
-    pedalStats[pedalIdx].clear();
-    pedalCalibStats[pedalIdx].clear();
-    adcStart(pedalPin);
-    return;
-  }
-
-  if (!adcBusy(pedalPin))
-  {
-    uint16_t val = adcEnd(pedalPin);
-    pedalStats[pedalIdx].add(val);
- 
-
-    if (pedalStats[pedalIdx].count() > 127)
+    void _setup_pedal(byte pin)
     {
-      static uint16_t prevVal[2] = {0};
-      uint16_t avgVal = (uint16_t)pedalStats[pedalIdx].average();
-      pedalCalibStats[pedalIdx].add(avgVal);
-
-      uint16_t minVal = pedalCalibStats[pedalIdx].minimum();
-      uint16_t maxVal = pedalCalibStats[pedalIdx].maximum();
-
-      if ((maxVal - minVal) > 2000)
-      {
-
-        uint16_t calibVal = map(avgVal, minVal, maxVal, 0, 1024);
-
-        if (abs(prevVal[pedalIdx] - calibVal) > 3)
-        {
-          Serial.print("pedal ");
-          Serial.print(pedalIdx);
-          Serial.print(": ");
-          Serial.println(calibVal);
-        }
-        prevVal[pedalIdx] = calibVal;
-        
-      } else {
-        // TODO: Blink LED
-        /*Serial.print("calib: ");
-        Serial.print(minVal);
-        Serial.print(" ");
-        Serial.println(maxVal);
-        */
-      }
-      pedalStats[pedalIdx].clear();
-      
+      adcAttachPin(pin);
     }
 
-    // Prep for next iteration
-    ++pedalIdx;
-    pedalIdx %= sizeof(pedalPins);
-    pedalPin = pedalPins[pedalIdx];
-    adcStart(pedalPin);
-  }
-}
+    void _init_loop_first_run(void)
+    {
+      pedalIdx = 0;
+      pedalPin = pedalPins[pedalIdx];
+      pedalStats[pedalIdx].clear();
+      pedalCalibStats[pedalIdx].clear();
+
+    }
+
+    void _process_adc_value(uint16_t val)
+    {
+      pedalStats[pedalIdx].add(val);
+
+      if (pedalStats[pedalIdx].count() > sampleCount)
+      {
+        uint16_t avgVal = (uint16_t)pedalStats[pedalIdx].average();
+        uint16_t minVal = pedalCalibStats[pedalIdx].minimum();
+        uint16_t maxVal = pedalCalibStats[pedalIdx].maximum();
+
+        pedalCalibStats[pedalIdx].add(avgVal);
+        if ((maxVal - minVal) > 2000)
+        {
+          uint16_t calibVal = map(avgVal, minVal, maxVal, 0, 1024);
+          if (abs(prevVal[pedalIdx] - calibVal) > sensitivity)
+          {
+
+            if (valueChanged)
+              valueChanged(pedalIdx, calibVal);
+            prevVal[pedalIdx] = calibVal;
+          }
+        } else {
+          // TODO: Blink LED since not calibrated
+        }
+        pedalStats[pedalIdx].clear();
+      }
+    }
+
+    void _prep_for_next_run(void)
+    {
+      // Prep for next iteration
+      ++pedalIdx;
+      pedalIdx %= sizeof(pedalPins);
+      pedalPin = pedalPins[pedalIdx];
+
+    }
+
+  public:
+    void (*valueChanged)(byte pedalIndex, uint16_t value);
+
+    Pedals() :  pedalPins{ PEDAL2_PIN, PEDAL1_PIN }, prevVal{0}
+    {
+
+    }
+    void setup(void)
+    {
+      analogReadResolution(12);
+      //analogSetClockDiv(1);
+      //analogSetCycles(8);
+      //analogSetSamples(64);
+      //analogSetAttenuation(ADC_11db);
+      _setup_pedal(PEDAL1_PIN);
+      _setup_pedal(PEDAL2_PIN);
+
+    }
+
+
+    void loop(void)
+    {
+      if (pedalIdx == 255)
+      {
+        _init_loop_first_run();
+        adcStart(pedalPin);
+        return;
+      }
+
+      if (!adcBusy(pedalPin))
+      {
+        uint16_t val = adcEnd(pedalPin);
+        _process_adc_value(val);
+        _prep_for_next_run();
+        adcStart(pedalPin);
+      }
+    }
+};
 #endif
 
 #ifndef DISABLE_FOOTSWITCHES
@@ -696,6 +709,15 @@ void setup_wifi(BLEPreferences *prefs)
 #endif
 }
 
+void pedalsValueChanged(byte pedalIndex, uint16_t value)
+{
+  Serial.print("pedal ");
+  Serial.print(pedalIndex);
+  Serial.print(": ");
+  Serial.println(value);
+}
+
+Pedals pedals;
 void setup() {
   Serial.begin(115200);
 
@@ -715,7 +737,8 @@ void setup() {
 
   setup_sx1509s();
 #ifndef DISABLE_PEDALS
-  setup_pedals();
+  pedals.setup();
+  pedals.valueChanged = pedalsValueChanged;
 #endif
 
 
@@ -735,7 +758,7 @@ void loop() {
 #endif
 
 #ifndef DISABLE_PEDALS
-  pedals_loop();
+  pedals.loop();
 #endif
 
 #ifndef DISABLE_FOOTSWITCHES
