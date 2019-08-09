@@ -247,6 +247,7 @@ void setup_display()
   display.init();
   display.setFont(ArialMT_Plain_24);
   display.setTextAlignment(TEXT_ALIGN_LEFT);
+  display.flipScreenVertically();
 }
 
 char displayBuff[15];
@@ -277,7 +278,6 @@ void setup_sx1509s(void)
 {
   OLEDprint("sx1509s...");
   TwoWire *sxwire = new TwoWire(1);
-
   sxwire->begin(SX1509_I2C_SDA, SX1509_I2C_SCL, 100000);
 
 #ifndef DISABLE_LEDS
@@ -288,7 +288,6 @@ void setup_sx1509s(void)
   }
   leds.clock(INTERNAL_CLOCK_2MHZ);
   OLEDprint("leds done.");
-
 #endif
 
 #ifndef SWITCHES
@@ -315,14 +314,7 @@ void setup_sx1509s(void)
 
   OLEDprint("switches done.");
 #endif
-
-
-
 }
-
-#ifndef DISABLE_PEDALS
-
-#endif
 
 #ifndef DISABLE_WIFI
 #ifndef DISABLE_WEBSOCKETS
@@ -616,15 +608,6 @@ const char *footswitchMappedNames[] = {
   "FS_2",   // 8000hh
 };
 
-void onFootswitchDown(const char *fsname)
-{
-  OLEDprintf("%s\ndown\n", fsname);
-}
-
-void onFootswitchUp(const char *fsname)
-{
-  OLEDprintf("%s\nup\n", fsname);
-}
 
 unsigned int footswitchState = 0;
 void footswitches_loop(void)
@@ -709,18 +692,32 @@ void setup_wifi(BLEPreferences *prefs)
 #endif
 }
 
+#ifndef  DISABLE_PEDALS
 void pedalsValueChanged(byte pedalIndex, uint16_t value)
 {
-  Serial.print("pedal ");
-  Serial.print(pedalIndex);
-  Serial.print(": ");
-  Serial.println(value);
+  /*Serial.print("pedal ");
+    Serial.print(pedalIndex);
+    Serial.print(": ");
+    Serial.println(value);*/
+  OLEDprintf("pedal %d\n%d\n", pedalIndex, value);
 }
+#endif
+
+#ifndef DISABLE_FOOTSWITCHES
+void onFootswitchDown(const char *fsname)
+{
+  OLEDprintf("%s\ndown\n", fsname);
+}
+
+void onFootswitchUp(const char *fsname)
+{
+  OLEDprintf("%s\nup\n", fsname);
+}
+#endif
 
 Pedals pedals;
 void setup() {
   Serial.begin(115200);
-
   Serial.println("fcb2019");
 
   pinMode(ledPin, OUTPUT);
@@ -740,8 +737,6 @@ void setup() {
   pedals.setup();
   pedals.valueChanged = pedalsValueChanged;
 #endif
-
-
 }
 
 void loop() {
