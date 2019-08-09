@@ -36,6 +36,7 @@ WiFiMulti WiFiMulti;
 
 #include <list>
 #include <iterator>
+#include <algorithm>
 
 #include <BLEDevice.h>
 #include <BLEUtils.h>
@@ -493,6 +494,7 @@ class Pedals
     byte sampleCount = 63;
     byte sensitivity = 3; // Lower is more sensitive
 
+    std::vector <byte> ledPins[2];
 
     void _setup_pedal(byte pin)
     {
@@ -530,7 +532,13 @@ class Pedals
           uint16_t calibVal = map(avgVal, minVal, maxVal, 0, 1024);
           if (abs(prevVal[pedalIdx] - calibVal) > sensitivity)
           {
+            Serial.println("ledPins");
+            for (auto const & ledPin : ledPins[pedalIdx] )
+            {
+              Serial.println(ledPin);
+              leds.analogWrite(ledPin, map(calibVal, 0, 1024, 0, 255));
 
+            }
             if (valueChanged)
               valueChanged(pedalIdx, calibVal);
             prevVal[pedalIdx] = calibVal;
@@ -589,6 +597,19 @@ class Pedals
       }
     }
 
+    void sync_led(byte pedalIdx, byte ledPin, byte state) {
+      switch (state) {
+        case 0:
+          ledPins[pedalIdx].erase(std::remove(ledPins[pedalIdx].begin(), ledPins[pedalIdx].end(), ledPin), ledPins[pedalIdx].end());
+          break;
+        case 1:
+          if (!(std::find(ledPins[pedalIdx].begin(), ledPins[pedalIdx].end(), ledPin) != ledPins[pedalIdx].end()))
+            ledPins[pedalIdx].push_back(ledPin);
+          break;
+        default:
+          break;
+      }
+    }
 
     static bool onPedalCalibrationReset(BLEPreferences *prefs, String name, String &newValue, String oldValue, bool &needReboot)
     {
@@ -599,6 +620,7 @@ class Pedals
       */
       return false;
     }
+
 
 };
 
@@ -666,20 +688,20 @@ void wifi_loop()
 #ifndef DISABLE_LEDS
 void setup_leds(void)
 {
-  for (byte i=0; i<16; i++)
+  for (byte i = 0; i < 16; i++)
     leds.pinMode(i, OUTPUT);
 }
 void leds_loop(void)
 {
   /*
-  static byte pin = 0;
+    static byte pin = 0;
 
-  if (pin < 16) {
+    if (pin < 16) {
     leds.pinMode(pin, OUTPUT); // Set LED pin to OUTPUT
     // Blink the LED pin -- ~1000 ms LOW, ~500 ms HIGH:
     //leds.blink(pin, 1000, 500);
     pin++;
-  }*/
+    }*/
 }
 #endif
 
@@ -716,6 +738,8 @@ void setup_wifi(BLEPreferences *prefs)
 #endif
 }
 
+Pedals pedals;
+
 char wsmsg[100];
 void wsSendMsg(const char *msgType, uint16_t arg1, uint16_t arg2)
 {
@@ -749,7 +773,24 @@ void api_led(std::vector<char *> args)
   Serial.println("api_led");
   byte pin = ledPinMap[atoi(args[1])];
   Serial.println(pin);
-  leds.blink(pin, 1000, 500);
+
+  if (!strcmp("state", args[2]))
+  {
+    leds.digitalWrite(pin, 1-atoi(args[3]));
+  } else if (!strcmp("intensity", args[2]))
+  {
+    leds.analogWrite(pin, atoi(args[3]));
+  } else if (!strcmp("blink", args[2]))
+  {
+    leds.blink(pin, atoi(args[3]), atoi(args[4]));
+  } else if (!strcmp("breathe", args[2]))
+  {
+    leds.breathe(pin, atoi(args[3]), atoi(args[4]), atoi(args[5]), atoi(args[6]));
+  } else if (!strcmp("pedal", args[2]))
+  {
+    pedals.sync_led(atoi(args[3]), pin, atoi(args[4]));
+  }
+
 }
 
 typedef void (*ws_api_fn_t)(std::vector<char *> args);
@@ -810,7 +851,6 @@ void onFootswitchUp(const char *fsname)
 }
 #endif
 
-Pedals pedals;
 void setup() {
   Serial.begin(115200);
   Serial.println("fcb2019");
