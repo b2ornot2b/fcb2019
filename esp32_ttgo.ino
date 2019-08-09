@@ -8,8 +8,10 @@
 //#define DISABLE_WEBSOCKET
 //#define DEBUG_WEBSOCKET
 
+#ifndef DISABLE_OTA
 #include <ArduinoOTA.h>
-#include <ArduinoWebsockets.h>
+#endif
+#include <ArduinoWebsockets.h>  
 #include <ESPmDNS.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -24,49 +26,208 @@ WiFiMulti WiFiMulti;
 #endif
 
 
-#include <SparkFunSX1509.h>  
+#include <SparkFunSX1509.h>
 
-#include <SH1106.h>
+//#include <SH1106.h>
 #include <SSD1306.h>
-#include <SH1106Spi.h>
-#include <OLEDDisplayUi.h>
-#include <SH1106Wire.h>
-#include <SSD1306Brzo.h>
+//#include <SH1106Spi.h>
+//#include <OLEDDisplayUi.h>
+//#include <SH1106Wire.h>
+//#include <SSD1306Brzo.h>
 #include <OLEDDisplay.h>
-#include <SH1106Brzo.h>
+//#include <SH1106Brzo.h>
 #include <OLEDDisplayFonts.h>
-#include <SSD1306Spi.h>
-#include <SSD1306Wire.h>
+//#include <SSD1306Spi.h>
+//#include <SSD1306Wire.h>
 #include <SSD1306I2C.h>
+
+
+
+#include <Preferences.h>
+
+#include <list>
+#include <iterator>
+
+#include <BLEDevice.h>
+#include <BLEUtils.h>
+#include <BLEServer.h>
+
+
+class BLEPreferences {
+  private:
+    const char * serviceUUID = "35d3d8f4-c1d8-4018-8f51-42d85c2f7e26";
+    BLEServer * m_ble_server;
+    BLEService * m_ble_service;
+
+    void _init_ble_service(void)
+    {
+      BLEDevice::init("b2"); // nspace.c_str());
+      m_ble_server = BLEDevice::createServer();
+      m_ble_service = m_ble_server->createService(serviceUUID);
+    }
+
+  public:
+    typedef bool (*SettingChangedCallback)(BLEPreferences *prefs, String name, String &newValue, String oldValue, bool &needReboot);
+    class Setting {
+      public:
+        String m_uuid;
+        String m_description;
+        String m_name;
+        String m_value;
+        SettingChangedCallback m_cb;
+        
+
+        Setting(String uuid, String name, String description, String value, SettingChangedCallback cb=NULL) :
+          m_uuid(uuid),
+          m_name(name),
+          m_description(description),
+          m_value(value),
+          m_cb(cb)
+        {
+        }
+
+        Setting(const Setting *src)
+        {
+          m_uuid = src->m_uuid;
+          m_name = src->m_name;
+          m_description = src->m_description;
+          m_value = src->m_value;
+          m_cb = src->m_cb;
+        }
+    };
+
+
+
+    class MyCallbackHandler: public BLECharacteristicCallbacks {
+        BLEPreferences *bleprefs;
+        const Setting *setting;
+
+        void onWrite(BLECharacteristic *pCharacteristic) {
+          String uuid(pCharacteristic->getUUID().toString().c_str());
+          String value(pCharacteristic->getValue().c_str());
+          Serial.println(uuid);
+          Serial.println(value);
+
+          Serial.println(setting->m_uuid);
+          Serial.println(setting->m_name);
+          Serial.println(setting->m_description);
+
+          if (uuid == setting->m_uuid)
+          { bool needReboot = false;
+            if (setting->m_cb(bleprefs, setting->m_name, value, setting->m_value, needReboot))
+            {
+              bleprefs->save(setting->m_name, value);
+              if (needReboot)
+                ESP.restart();
+            }
+          }
+
+        }
+      public:
+        MyCallbackHandler(BLEPreferences *p, const Setting *s) {
+          bleprefs = p;
+          setting = new Setting(s);
+        }
+    };
+
+  public:
+
+
+    BLEPreferences(String ns)
+    {
+      // TODO: Handle namespace here
+    }
+
+    void setup(const std::list<Setting> l)
+    {
+
+      _init_ble_service();
+      Preferences prefs;
+
+      prefs.begin("b2", true);
+
+      for (auto const&it : l) //(it=l.begin(); it!=l.end(); ++it)
+      {
+        Serial.print("Setting up ");
+        Serial.println(it.m_name);
+        BLECharacteristic *pCharacteristic = m_ble_service->createCharacteristic(
+                                               it.m_uuid.c_str(),
+                                               BLECharacteristic::PROPERTY_READ |
+                                               BLECharacteristic::PROPERTY_WRITE
+                                             );
+        pCharacteristic->setCallbacks(new MyCallbackHandler(this, &it));
+        const char *name = it.m_name.c_str();
+        const char *default_value = it.m_value.c_str();
+        const char *value = prefs.getString(name, default_value).c_str();
+        Serial.println(name);
+        Serial.println(default_value);
+        Serial.println(value);
+        pCharacteristic->setValue(value);
+      }
+      prefs.end();
+
+      m_ble_service->start();
+      BLEAdvertising *pAdvertising = m_ble_server->getAdvertising();
+      pAdvertising->start();
+
+    }
+
+    void save(String name, String value)
+    {
+      Preferences prefs;
+
+      prefs.begin("b2", false);
+      prefs.putString(name.c_str(), value.c_str());
+      prefs.end();
+      Serial.println("saved");
+    }
+
+    String getValue(String name)
+    {
+      Preferences prefs;
+
+      prefs.begin("b2", true);
+      String ret(prefs.getString(name.c_str()));
+      prefs.end();
+      Serial.print("getValue ");
+      Serial.print(name);
+      Serial.print("=");
+      Serial.println(ret);
+      
+      return ret;
+    }
+};
+
+
 
 #ifndef DISABLE_OTA
 void setup_ota(void)
 {
-    ArduinoOTA
-    .onStart([]() {
-      String type;
-      if (ArduinoOTA.getCommand() == U_FLASH)
-        type = "sketch";
-      else // U_SPIFFS
-        type = "filesystem";
+  ArduinoOTA
+  .onStart([]() {
+    String type;
+    if (ArduinoOTA.getCommand() == U_FLASH)
+      type = "sketch";
+    else // U_SPIFFS
+      type = "filesystem";
 
-      // NOTE: if updating SPIFFS this would be the place to unmount SPIFFS using SPIFFS.end()
-      Serial.println("Start updating " + type);
-    })
-    .onEnd([]() {
-      Serial.println("\nEnd");
-    })
-    .onProgress([](unsigned int progress, unsigned int total) {
-      Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
-    })
-    .onError([](ota_error_t error) {
-      Serial.printf("Error[%u]: ", error);
-      if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
-      else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
-      else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
-      else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
-      else if (error == OTA_END_ERROR) Serial.println("End Failed");
-    });
+    // NOTE: if updating SPIFFS this would be the place to unmount SPIFFS using SPIFFS.end()
+    Serial.println("Start updating " + type);
+  })
+  .onEnd([]() {
+    Serial.println("\nEnd");
+  })
+  .onProgress([](unsigned int progress, unsigned int total) {
+    Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+  })
+  .onError([](ota_error_t error) {
+    Serial.printf("Error[%u]: ", error);
+    if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
+    else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
+    else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+    else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+    else if (error == OTA_END_ERROR) Serial.println("End Failed");
+  });
 
   ArduinoOTA.begin();
 }
@@ -74,7 +235,7 @@ void setup_ota(void)
 
 uint8_t ledPin = 16; // Onboard LED reference
 
-const byte PEDAL1_PIN = 36, PEDAL2_PIN = 39;
+const byte PEDAL1_PIN = 35, PEDAL2_PIN = 33;
 
 const byte OLED_I2C_ADDRESS = 0x3c, OLED_I2C_SDA = 5, OLED_I2C_SCL = 4;
 
@@ -101,9 +262,9 @@ void setup_display()
 char displayBuff[15];
 
 #define OLEDprintf(...) {  \
-  sprintf(displayBuff, __VA_ARGS__);  \
-  OLEDprint(displayBuff); \
-}
+    sprintf(displayBuff, __VA_ARGS__);  \
+    OLEDprint(displayBuff); \
+  }
 
 void OLEDprint(char *s)
 {
@@ -126,7 +287,7 @@ void setup_sx1509s(void)
 {
   OLEDprint("sx1509s...");
   TwoWire *sxwire = new TwoWire(1);
-  
+
   sxwire->begin(SX1509_I2C_SDA, SX1509_I2C_SCL, 100000);
 
 #ifndef DISABLE_LEDS
@@ -135,7 +296,7 @@ void setup_sx1509s(void)
   {
     while (1) ; // If we fail to communicate, loop forever.
   }
-  leds.clock(INTERNAL_CLOCK_2MHZ);  
+  leds.clock(INTERNAL_CLOCK_2MHZ);
   OLEDprint("leds done.");
 
 #endif
@@ -147,7 +308,7 @@ void setup_sx1509s(void)
     while (1) ; // If we fail to communicate, loop forever.
   }
   switches.clock(INTERNAL_CLOCK_2MHZ);
-  for (byte i=0; i<16; i++)
+  for (byte i = 0; i < 16; i++)
   {
     switches.pinMode(i, INPUT_PULLUP);
     switches.enableInterrupt(i, CHANGE);
@@ -156,15 +317,15 @@ void setup_sx1509s(void)
 #endif
   }
 #ifndef DISABLE_DEBOUNCE
-    switches.debounceTime(FOOTSWITCH_DEBOUNCE_TIME);
+  switches.debounceTime(FOOTSWITCH_DEBOUNCE_TIME);
 #endif
-  
+
   pinMode(21, INPUT_PULLUP);
   attachInterrupt(21, button, FALLING);
- 
+
   OLEDprint("switches done.");
 #endif
-  
+
 
 
 }
@@ -174,42 +335,14 @@ void setup_pedal(byte pin)
 {
   OLEDprintf("Pedal %d...", pin);
   adcAttachPin(pin);
-  analogSetClockDiv(1);
+  /*analogSetClockDiv(1);
   analogReadResolution(12);
   analogSetCycles(8);
   analogSetSamples(64);
   analogSetAttenuation(ADC_11db);
-  OLEDprintf("Pedal %d", pin);
+  */OLEDprintf("Pedal %d", pin);
 }
 #endif
-
-char hostname[10];
-void setup() {
-  Serial.begin(115200);
-
-  pinMode(ledPin, OUTPUT);
-  
-  setup_display();
-  setup_sx1509s();
-#ifndef DISABLE_PEDALS
-  setup_pedal(PEDAL1_PIN);
-  setup_pedal(PEDAL2_PIN);
-#endif
-  
-
-#ifndef DISABLE_WIFI
-#ifdef WIFI_MULTI
-  WiFiMulti.addAP("b2desk", "this is b2!");
-#else
-  sprintf(hostname, "fcb2019");
-  WiFi.disconnect();
-  WiFi.mode(WIFI_STA);
-  WiFi.setHostname(hostname);
-  WiFi.begin("b2desk", "this is b2!");
-  MDNS.begin(hostname);
-#endif
-#endif
-}
 
 #ifndef DISABLE_WIFI
 #ifndef DISABLE_WEBSOCKETS
@@ -228,83 +361,83 @@ typedef enum {
   WS_DISCONNECTED
 } ws_state_t;
 ws_state_t ws_state = WS_DISABLED;
-void connect_ws() 
+void connect_ws()
 {
   ws_state = WS_INIT;
 }
 
 void onEventsCallback(websockets::WebsocketsEvent event, String data) {
-    if(event == WebsocketsEvent::ConnectionOpened) {
-        Serial.println("Connnection Opened");
-    } else if(event == WebsocketsEvent::ConnectionClosed) {
-        Serial.println("Connnection Closed");
-        ws_state = WS_DISCONNECTED;
-    } else if(event == WebsocketsEvent::GotPing) {
+  if (event == WebsocketsEvent::ConnectionOpened) {
+    Serial.println("Connnection Opened");
+  } else if (event == WebsocketsEvent::ConnectionClosed) {
+    Serial.println("Connnection Closed");
+    ws_state = WS_DISCONNECTED;
+  } else if (event == WebsocketsEvent::GotPing) {
 #ifdef DEBUG_WEBSOCKET
-        Serial.println("Got a Ping!");
+    Serial.println("Got a Ping!");
 #endif
-    } else if(event == WebsocketsEvent::GotPong) {
+  } else if (event == WebsocketsEvent::GotPong) {
 #ifdef DEBUG_WEBSOCKET
-        Serial.println("Got a Pong!");
+    Serial.println("Got a Pong!");
 #endif
-    }
+  }
 }
 
 void onMessageCallback(websockets::WebsocketsMessage message) {
-    Serial.print("Got Message: ");
-    Serial.println(message.data());
+  Serial.print("Got Message: ");
+  Serial.println(message.data());
 }
 
 const uint64_t WS_RECONNECT_TIME = 500, WS_PING_INTERVAL = 1000;
 uint64_t lastPing = 0, connectAt = 0;
 void ws_loop()
 {
- 
+
   switch (ws_state)
   {
     case WS_DISABLED:
       return;
-    case WS_INIT: 
+    case WS_INIT:
       client.onEvent(onEventsCallback);
       client.onMessage(onMessageCallback);
       /*client.onMessage([&](WebsocketsMessage message){
         //OLEDprintf("%s", message.data());
         Serial.println(message.data());
-      });*/   
-      ws_state = WS_CONNECT; 
-    // run callback when events are occuring
+        });*/
+      ws_state = WS_CONNECT;
+      // run callback when events are occuring
       break;
     case WS_CONNECT:
-    // Connect to server
-    if (millis() < connectAt)
-       break;
-    if (client.connect(websockets_server_host, websockets_server_port, "/"))
-    {
-      ws_state = WS_CONNECTED;
-      OLEDprintf("ws\nconnected\n");
-      lastPing = millis();
-    }
-    else 
-    {
-      ws_state = WS_DISCONNECTED;
-      //OLEDprintf("ws\ndisconnected\n");
-    }
-    break;
-    
+      // Connect to server
+      if (millis() < connectAt)
+        break;
+      if (client.connect(websockets_server_host, websockets_server_port, "/"))
+      {
+        ws_state = WS_CONNECTED;
+        OLEDprintf("ws\nconnected\n");
+        lastPing = millis();
+      }
+      else
+      {
+        ws_state = WS_DISCONNECTED;
+        //OLEDprintf("ws\ndisconnected\n");
+      }
+      break;
+
     // Send a message
     //client.send("FCB2.019 init");
 
     // Send a ping
     //client.ping();
     case WS_CONNECTED:
-       if ((millis() - lastPing) > WS_PING_INTERVAL)
-       {
-          client.ping();
-          lastPing = millis();
-       }
-       if (client.available())
-         client.poll(); 
-       break;
+      if ((millis() - lastPing) > WS_PING_INTERVAL)
+      {
+        client.ping();
+        lastPing = millis();
+      }
+      if (client.available())
+        client.poll();
+      break;
     case WS_DISCONNECTED:
       ws_state = WS_CONNECT;
       connectAt = millis() + WS_RECONNECT_TIME;
@@ -338,7 +471,7 @@ uint8_t wifi_status = -1, wifi_status_prev = -1;
 char *wifi_status_str = NULL;
 uint8_t wifi_status_changed(void)
 {
-  
+
   switch (wifi_status) {
     case WL_IDLE_STATUS:
       wifi_status_str = "Idle";
@@ -370,7 +503,7 @@ uint8_t wifi_status_changed(void)
     default:
       wifi_status_str = "wifi ?";
       break;
-     }
+  }
   OLEDprintf("%s", wifi_status_str);
   wifi_status_prev = wifi_status;
 }
@@ -381,16 +514,16 @@ uint8_t wifi_status_changed(void)
 const byte pedalPins[] = { PEDAL1_PIN, PEDAL2_PIN };
 //const byte pedalPins[] = { PEDAL2_PIN };
 byte pedalPinIndex = 0;
-byte pedalPin = -1;
+byte pedalPin = -1;h
 void pedals_poll(void)
 {
   if (pedalPin == -1)
   {
-      pedalPin = pedalPins[pedalPinIndex];
-      adcStart(pedalPin);
-      return;
-  }
-  
+    pedalPin = pedalPins[pedalPinIndex];
+    adcStart(pedalPin);
+    return;
+  }y
+
   if (!adcBusy(pedalPin))
   {
     uint16_t val = adcEnd(pedalPin);
@@ -400,7 +533,7 @@ void pedals_poll(void)
     Serial.println(val);
     ++pedalPinIndex;
     pedalPinIndex %= sizeof(pedalPins);
-    pedalPin = pedalPins[pedalPinIndex]; 
+    pedalPin = pedalPins[pedalPinIndex];
     adcStart(pedalPin);
   }
 }
@@ -411,8 +544,8 @@ const char *footswitchMappedNames[] = {
   "FS_UP", //    1
   "FS_7",   //    2
   "FS_10",  //    4
-   NULL,   //    8
-   NULL,   //   10
+  NULL,   //    8
+  NULL,   //   10
   "FS_9",   //   20
   "FS_6",   //   40
   "FS_8",   //   80
@@ -420,10 +553,10 @@ const char *footswitchMappedNames[] = {
   "FS_5",   //  200
   "FS_4",   //  400
   "FS_1",   //  800
-   NULL,   // 1000
-   NULL,   // 2000
+  NULL,   // 1000
+  NULL,   // 2000
   "FS_DOWN",//4000
-  "FS_2",   // 8000   
+  "FS_2",   // 8000hh
 };
 
 void onFootswitchDown(const char *fsname)
@@ -441,19 +574,19 @@ void footswitches_poll(void)
 {
   if (!footswitchesPressed)
     return;
-    
-    footswitchesPressed = false;
+
+  footswitchesPressed = false;
 
   unsigned int val = switches.readPins() ^ 0xffff;
-  
-  for (byte i=0; i<16; i++) 
+
+  for (byte i = 0; i < 16; i++)
   {
-     bool fsPrevState = footswitchState & (0x01 << i);
-     bool fsState = val & (0x01 << i);
-     if (fsPrevState==false && fsState==true)
-       onFootswitchDown(footswitchMappedNames[i]);
-     else if (fsPrevState==true && fsState==false)
-       onFootswitchUp(footswitchMappedNames[i]);     
+    bool fsPrevState = footswitchState & (0x01 << i);
+    bool fsState = val & (0x01 << i);
+    if (fsPrevState == false && fsState == true)
+      onFootswitchDown(footswitchMappedNames[i]);
+    else if (fsPrevState == true && fsState == false)
+      onFootswitchUp(footswitchMappedNames[i]);
   }
   footswitchState = val;
 }
@@ -466,7 +599,7 @@ void wifi_loop()
   wifi_status = WiFiMulti.run();
 #else
   wifi_status = WiFi.status();
-#endif 
+#endif
   if (wifi_status != wifi_status_prev)
     wifi_status_changed();
 }
@@ -482,12 +615,71 @@ void leds_loop(void)
     // Blink the LED pin -- ~1000 ms LOW, ~500 ms HIGH:
     leds.blink(pin, 1000, 500);
     pin++;
- }
+  }
 }
 #endif
 
+char hostname[10];
+bool onWiFiSettingsChanged(BLEPreferences *prefs, String name, String &newValue, String oldValue, bool &needReboot)
+{
+  Serial.print("onWiFiSettingsChanged:");
+  Serial.println(name);
+  Serial.println(newValue);
+  Serial.println(oldValue);
+  needReboot = true;
+  return true;
+}
+
+void setup_wifi(BLEPreferences *prefs)
+{
+  const char *ssid = strdup(prefs->getValue("ssid").c_str());
+  const char *password = strdup(prefs->getValue("password").c_str());
+  const char *hname = strdup(prefs->getValue("hostname").c_str());
+
+  OLEDprintf("wifi=%s\n%s", ssid, password);
+  
+#ifndef DISABLE_WIFI
+#ifdef WIFI_MULTI
+  WiFiMulti.addAP(ssid, password);
+#else
+  strncpy(hostname, hname, sizeof(hostname));
+  WiFi.disconnect();
+  WiFi.mode(WIFI_STA);
+  WiFi.setHostname(hostname);
+  WiFi.begin(ssid, password);
+  MDNS.begin(hostname);
+#endif
+#endif  
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  Serial.println("fcb2019");
+  
+  pinMode(ledPin, OUTPUT);
+
+  BLEPreferences xprefs("fcb2019");
+  xprefs.setup({
+    BLEPreferences::Setting("edabdb60-b8cc-4869-9368-9c5f11f0155e", "ssid", "WiFi SSID", "b2", onWiFiSettingsChanged),
+    BLEPreferences::Setting("03f18da6-427c-422c-acc5-95966229efa0", "password", "WiFi Password", "hello", onWiFiSettingsChanged),
+    BLEPreferences::Setting("9a9f29dd-c65b-490c-9f7c-34123f2c2f7a", "hostname", "Hostname", "fcb2019", onWiFiSettingsChanged),
+  });
+
+  setup_display();
+  setup_wifi(&xprefs);
+  
+  setup_sx1509s();
+#ifndef DISABLE_PEDALS
+  setup_pedal(PEDAL1_PIN);
+  setup_pedal(PEDAL2_PIN);
+#endif
+  
+
+}
+
 void loop() {
-#ifdef DISABLE_OTA
+#ifndef DISABLE_OTA
   ArduinoOTA.handle();
 #endif
 
