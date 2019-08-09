@@ -1,6 +1,6 @@
 
 #define DISABLE_OTA
-#define DISABLE_LEDS
+//#define DISABLE_LEDS
 //#define DISABLE_FOOTSWITCHES
 //#define DISABLE_DEBOUNCE
 //#define DISABLE_WIFI
@@ -355,11 +355,6 @@ void onEventsCallback(websockets::WebsocketsEvent event, String data) {
   }
 }
 
-void onMessageCallback(websockets::WebsocketsMessage message) {
-  Serial.print("Got Message: ");
-  Serial.println(message.data());
-}
-
 const uint64_t WS_RECONNECT_TIME = 500, WS_PING_INTERVAL = 1000;
 uint64_t lastPing = 0, connectAt = 0;
 void ws_loop()
@@ -486,15 +481,17 @@ uint8_t wifi_status_changed(void)
 class Pedals
 {
   private:
-    const byte sampleCount = 63;
-    const byte sensitivity = 3; // Lower is more sensitive
+
     const byte pedalPins[2];
     byte pedalPin;
     byte pedalIdx = 255;
     uint16_t prevVal[2];
 
-    Statistic pedalStats[2];
-    Statistic pedalCalibStats[2];
+    Statistic stats[2];
+    Statistic calibStats[2];
+    static bool resetCalibration;
+    byte sampleCount = 63;
+    byte sensitivity = 3; // Lower is more sensitive
 
 
     void _setup_pedal(byte pin)
@@ -506,22 +503,28 @@ class Pedals
     {
       pedalIdx = 0;
       pedalPin = pedalPins[pedalIdx];
-      pedalStats[pedalIdx].clear();
-      pedalCalibStats[pedalIdx].clear();
+      stats[pedalIdx].clear();
+      calibStats[pedalIdx].clear();
 
     }
 
     void _process_adc_value(uint16_t val)
     {
-      pedalStats[pedalIdx].add(val);
-
-      if (pedalStats[pedalIdx].count() > sampleCount)
+      if (resetCalibration)
       {
-        uint16_t avgVal = (uint16_t)pedalStats[pedalIdx].average();
-        uint16_t minVal = pedalCalibStats[pedalIdx].minimum();
-        uint16_t maxVal = pedalCalibStats[pedalIdx].maximum();
+        calibStats[0].clear();
+        calibStats[1].clear();
+        resetCalibration = false;
+      }
+      stats[pedalIdx].add(val);
 
-        pedalCalibStats[pedalIdx].add(avgVal);
+      if (stats[pedalIdx].count() > sampleCount)
+      {
+        uint16_t avgVal = (uint16_t)stats[pedalIdx].average();
+        uint16_t minVal = calibStats[pedalIdx].minimum();
+        uint16_t maxVal = calibStats[pedalIdx].maximum();
+
+        calibStats[pedalIdx].add(avgVal);
         if ((maxVal - minVal) > 2000)
         {
           uint16_t calibVal = map(avgVal, minVal, maxVal, 0, 1024);
@@ -535,7 +538,7 @@ class Pedals
         } else {
           // TODO: Blink LED since not calibrated
         }
-        pedalStats[pedalIdx].clear();
+        stats[pedalIdx].clear();
       }
     }
 
@@ -549,11 +552,11 @@ class Pedals
     }
 
   public:
+
     void (*valueChanged)(byte pedalIndex, uint16_t value);
 
     Pedals() :  pedalPins{ PEDAL2_PIN, PEDAL1_PIN }, prevVal{0}
     {
-
     }
     void setup(void)
     {
@@ -585,7 +588,22 @@ class Pedals
         adcStart(pedalPin);
       }
     }
+
+
+    static bool onPedalCalibrationReset(BLEPreferences *prefs, String name, String &newValue, String oldValue, bool &needReboot)
+    {
+      resetCalibration = true;
+      /*sensitivity = prefs->getValue("pedalSensitivity").toInt();
+        sampleCount = prefs->getValue("pedalSamples").toInt();
+        OLEDprintf("pedal %d\nSET %d\n", sensitivity, sampleCount);
+      */
+      return false;
+    }
+
 };
+
+bool Pedals::resetCalibration = false;
+
 #endif
 
 #ifndef DISABLE_FOOTSWITCHES
@@ -646,16 +664,22 @@ void wifi_loop()
 #endif
 
 #ifndef DISABLE_LEDS
+void setup_leds(void)
+{
+  for (byte i=0; i<16; i++)
+    leds.pinMode(i, OUTPUT);
+}
 void leds_loop(void)
 {
+  /*
   static byte pin = 0;
 
   if (pin < 16) {
     leds.pinMode(pin, OUTPUT); // Set LED pin to OUTPUT
     // Blink the LED pin -- ~1000 ms LOW, ~500 ms HIGH:
-    leds.blink(pin, 1000, 500);
+    //leds.blink(pin, 1000, 500);
     pin++;
-  }
+  }*/
 }
 #endif
 
@@ -692,26 +716,97 @@ void setup_wifi(BLEPreferences *prefs)
 #endif
 }
 
+char wsmsg[100];
+void wsSendMsg(const char *msgType, uint16_t arg1, uint16_t arg2)
+{
+  sprintf(wsmsg, "%ld %s %d %d", millis(), msgType, arg1, arg2);
+  client.send(wsmsg);
+}
+
+void api_reset(std::vector<char *> args)
+{
+  Serial.println("api_reset");
+  ESP.restart();
+}
+
+byte ledPinMap[] = {
+  15, // n.c.
+  0, // 1
+  1, // 2
+  2, // 3
+  3, // 4
+  11, // 5
+  4, // 6
+  5, // 7
+  6, // 8
+  7, // 9
+  12, // 10
+  14, // Expr 1
+  13, // Expr 2
+};
+void api_led(std::vector<char *> args)
+{
+  Serial.println("api_led");
+  byte pin = ledPinMap[atoi(args[1])];
+  Serial.println(pin);
+  leds.blink(pin, 1000, 500);
+}
+
+typedef void (*ws_api_fn_t)(std::vector<char *> args);
+typedef struct {
+  const char *api;
+  ws_api_fn_t callback;
+} ws_api_t;
+
+ws_api_t api_handlers[] = {
+  { "reset", api_reset },
+  { "led", api_led },
+  { NULL, NULL }
+};
+
+void onMessageCallback(websockets::WebsocketsMessage message) {
+  Serial.print("Got Message: ");
+  Serial.println(message.data());
+
+  char *t, *msg = strdup(message.data().c_str());
+  std::vector<char *> args;
+  while ((t = strtok_r(msg, " \n", &msg)) != NULL)
+  {
+    args.push_back(t);
+    t = strtok(NULL, " \t\n");
+  }
+  for (byte i = 0; api_handlers[i].api; i++)
+  {
+    if (!strncmp(api_handlers[i].api, args.front(), strlen(api_handlers[i].api)))
+    {
+      api_handlers[i].callback(args);
+      break;
+    }
+  }
+  free(msg);
+}
+
 #ifndef  DISABLE_PEDALS
 void pedalsValueChanged(byte pedalIndex, uint16_t value)
 {
-  /*Serial.print("pedal ");
-    Serial.print(pedalIndex);
-    Serial.print(": ");
-    Serial.println(value);*/
-  OLEDprintf("pedal %d\n%d\n", pedalIndex, value);
+  OLEDprintf("PEDAL_%d\n%d\n", pedalIndex + 1, value);
+  wsSendMsg("PEDAL_VALUE", pedalIndex, value);
 }
 #endif
+
+
 
 #ifndef DISABLE_FOOTSWITCHES
 void onFootswitchDown(const char *fsname)
 {
   OLEDprintf("%s\ndown\n", fsname);
+  wsSendMsg(fsname, 1, 0);
 }
 
 void onFootswitchUp(const char *fsname)
 {
   OLEDprintf("%s\nup\n", fsname);
+  wsSendMsg(fsname, 0, 0);
 }
 #endif
 
@@ -727,6 +822,8 @@ void setup() {
     BLEPreferences::Setting("edabdb60-b8cc-4869-9368-9c5f11f0155e", "ssid", "WiFi SSID", "b2", onWiFiSettingsChanged),
     BLEPreferences::Setting("03f18da6-427c-422c-acc5-95966229efa0", "password", "WiFi Password", "hello", onWiFiSettingsChanged),
     BLEPreferences::Setting("9a9f29dd-c65b-490c-9f7c-34123f2c2f7a", "hostname", "Hostname", "fcb2019", onWiFiSettingsChanged),
+    BLEPreferences::Setting("835e92fa-a035-4383-8e8b-26377f65a815", "pedalReset", "Reset Pedal Calibration", "0", Pedals::onPedalCalibrationReset),
+    //    BLEPreferences::Setting("ce3b9e47-6fbc-4a64-bf4d-545c2b4b7785", "pedalSamples", "PedalSamples", "63", Pedals::onPedalSettingsChanged),
   });
 
   setup_display();
@@ -736,6 +833,9 @@ void setup() {
 #ifndef DISABLE_PEDALS
   pedals.setup();
   pedals.valueChanged = pedalsValueChanged;
+#endif
+#ifndef DISABLE_LEDS
+  setup_leds();
 #endif
 }
 
