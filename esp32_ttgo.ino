@@ -518,6 +518,7 @@ void setup_pedal(byte pin)
   */OLEDprintf("Pedal %d", pin);
 }
 
+Statistic pedalCalibStats[2];
 void pedals_loop(void)
 {
   static byte pedalPin;
@@ -527,6 +528,7 @@ void pedals_loop(void)
     pedalIdx = 0;
     pedalPin = pedalPins[pedalIdx];
     pedalStats[pedalIdx].clear();
+    pedalCalibStats[pedalIdx].clear();
     adcStart(pedalPin);
     return;
   }
@@ -535,17 +537,44 @@ void pedals_loop(void)
   {
     uint16_t val = adcEnd(pedalPin);
     pedalStats[pedalIdx].add(val);
+ 
 
     if (pedalStats[pedalIdx].count() > 127)
     {
+      static uint16_t prevVal[2] = {0};
+      uint16_t avgVal = (uint16_t)pedalStats[pedalIdx].average();
+      pedalCalibStats[pedalIdx].add(avgVal);
 
-      Serial.print("pedal ");
-      Serial.print(pedalIdx);
-      Serial.print(": ");
-      Serial.println((uint16_t)pedalStats[pedalIdx].average());
+      uint16_t minVal = pedalCalibStats[pedalIdx].minimum();
+      uint16_t maxVal = pedalCalibStats[pedalIdx].maximum();
+
+      if ((maxVal - minVal) > 2000)
+      {
+
+        uint16_t calibVal = map(avgVal, minVal, maxVal, 0, 1024);
+
+        if (abs(prevVal[pedalIdx] - calibVal) > 3)
+        {
+          Serial.print("pedal ");
+          Serial.print(pedalIdx);
+          Serial.print(": ");
+          Serial.println(calibVal);
+        }
+        prevVal[pedalIdx] = calibVal;
+        
+      } else {
+        // TODO: Blink LED
+        /*Serial.print("calib: ");
+        Serial.print(minVal);
+        Serial.print(" ");
+        Serial.println(maxVal);
+        */
+      }
       pedalStats[pedalIdx].clear();
+      
     }
 
+    // Prep for next iteration
     ++pedalIdx;
     pedalIdx %= sizeof(pedalPins);
     pedalPin = pedalPins[pedalIdx];
