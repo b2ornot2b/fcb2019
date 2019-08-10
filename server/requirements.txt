@@ -1,0 +1,5 @@
+gevent==1.4.0
+gevent-websocket==0.10.1
+greenlet==0.4.15
+ujson==1.35
+wsaccel==0.6.2

@@ -379,8 +379,14 @@ void ws_loop()
       // Connect to server
       if (millis() < connectAt)
         break;
+      char header[100];
+//      client.setExtraHeaders(header, "Host: %s:%d", websockets_server_host, websockets_server_port);
       if (client.connect(websockets_server_host, websockets_server_port, "/"))
       {
+        
+        //client.send("FCB2.019 init");
+        wsSendMsg("FCB2.019", 0, 1);
+
         ws_state = WS_CONNECTED;
         OLEDprintf("ws\nconnected\n");
         lastPing = millis();
@@ -393,8 +399,7 @@ void ws_loop()
       break;
 
     // Send a message
-    //client.send("FCB2.019 init");
-
+    
     // Send a ping
     //client.ping();
     case WS_CONNECTED:
@@ -629,23 +634,23 @@ bool Pedals::resetCalibration = false;
 #endif
 
 #ifndef DISABLE_FOOTSWITCHES
-const char *footswitchMappedNames[] = {
-  "FS_UP", //    1
-  "FS_7",   //    2
-  "FS_10",  //    4
-  NULL,   //    8
-  NULL,   //   10
-  "FS_9",   //   20
-  "FS_6",   //   40
-  "FS_8",   //   80
-  "FS_3",   //  100
-  "FS_5",   //  200
-  "FS_4",   //  400
-  "FS_1",   //  800
-  NULL,   // 1000
-  NULL,   // 2000
-  "FS_DOWN",//4000
-  "FS_2",   // 8000hh
+const byte footswitchMap[] = {
+  11, //"FS_UP", //    1
+  7, //"FS_7",   //    2
+  10, //"FS_10",  //    4
+  0, //NULL,   //    8
+  0, //NULL,   //   10
+  9, //"FS_9",   //   20
+  6, //"FS_6",   //   40
+  8, //"FS_8",   //   80
+  3, //"FS_3",   //  100
+  5, //"FS_5",   //  200
+  4, //"FS_4",   //  400
+  1, //"FS_1",   //  800
+  0, //NULL,   // 1000
+  0, //NULL,   // 2000
+  12, //"FS_DOWN",//4000
+  2, //"FS_2",   // 8000hh
 };
 
 
@@ -664,9 +669,9 @@ void footswitches_loop(void)
     bool fsPrevState = footswitchState & (0x01 << i);
     bool fsState = val & (0x01 << i);
     if (fsPrevState == false && fsState == true)
-      onFootswitchDown(footswitchMappedNames[i]);
+      onFootswitchDown(footswitchMap[i]);
     else if (fsPrevState == true && fsState == false)
-      onFootswitchUp(footswitchMappedNames[i]);
+      onFootswitchUp(footswitchMap[i]);
   }
   footswitchState = val;
 }
@@ -776,7 +781,7 @@ void api_led(std::vector<char *> args)
 
   if (!strcmp("state", args[2]))
   {
-    leds.digitalWrite(pin, 1-atoi(args[3]));
+    leds.digitalWrite(pin, 1 - atoi(args[3]));
   } else if (!strcmp("intensity", args[2]))
   {
     leds.analogWrite(pin, atoi(args[3]));
@@ -816,6 +821,8 @@ void onMessageCallback(websockets::WebsocketsMessage message) {
     args.push_back(t);
     t = strtok(NULL, " \t\n");
   }
+  uint32_t timestamp = atoi(args.front());
+  args.erase(args.begin());
   for (byte i = 0; api_handlers[i].api; i++)
   {
     if (!strncmp(api_handlers[i].api, args.front(), strlen(api_handlers[i].api)))
@@ -838,16 +845,16 @@ void pedalsValueChanged(byte pedalIndex, uint16_t value)
 
 
 #ifndef DISABLE_FOOTSWITCHES
-void onFootswitchDown(const char *fsname)
+void onFootswitchDown(byte fs) //const char *fsname)
 {
-  OLEDprintf("%s\ndown\n", fsname);
-  wsSendMsg(fsname, 1, 0);
+  OLEDprintf("FS_%d\ndown\n", fs);
+  wsSendMsg("FOOTSWITCH", fs, 1);
 }
 
-void onFootswitchUp(const char *fsname)
+void onFootswitchUp(byte fs) //const char *fsname)
 {
-  OLEDprintf("%s\nup\n", fsname);
-  wsSendMsg(fsname, 0, 0);
+  OLEDprintf("FS_%d\nup\n", fs);
+  wsSendMsg("FOOTSWITCH", fs, 0);
 }
 #endif
 
