@@ -374,8 +374,8 @@ void setup_sx1509s(void)
 using namespace websockets;
 WebsocketsClient client;
 
-const char *websockets_server_host = "192.168.0.13";
-const int websockets_server_port = 3000;
+//const char *websockets_server_host = "192.168.0.13";
+//const int websockets_server_port = 3000;
 
 
 typedef enum {
@@ -429,12 +429,17 @@ void ws_loop()
       // run callback when events are occuring
       break;
     case WS_CONNECT:
+      {
       // Connect to server
       if (millis() < connectAt)
         break;
       char header[100];
       //      client.setExtraHeaders(header, "Host: %s:%d", websockets_server_host, websockets_server_port);
-      if (client.connect(websockets_server_host, websockets_server_port, "/"))
+
+      String wsserver = pGlobalPrefs->getValue("wsServer");
+      String wshost = wsserver.substring(0, wsserver.indexOf(":"));
+      int wsport = wsserver.substring(wsserver.indexOf(":")+1).toInt();
+      if (client.connect(wshost, wsport, "/"))
       {
 
         //client.send("FCB2.019 init");
@@ -455,6 +460,7 @@ void ws_loop()
 
     // Send a ping
     //client.ping();
+      }
     case WS_CONNECTED:
       if ((millis() - lastPing) > WS_PING_INTERVAL)
       {
@@ -974,7 +980,7 @@ void setup() {
     BLEPreferences::Setting("9a9f29dd-c65b-490c-9f7c-34123f2c2f7a", "hostname", "Hostname", ProductName, onWiFiSettingsChanged),
     BLEPreferences::Setting("835e92fa-a035-4383-8e8b-26377f65a815", "pedalReset", "Reset Pedal Calibration", "0", Pedals::onPedalCalibrationReset),
     //    BLEPreferences::Setting("ce3b9e47-6fbc-4a64-bf4d-545c2b4b7785", "pedalSamples", "PedalSamples", "63", Pedals::onPedalSettingsChanged),
-    //BLEPreferences::Setting("54ab9c0a-a957-410d-a8ba-6c0889e6e9f7", "wsServer", "Websocket Server IP", "192.168.1.13", onWsServerChanged),
+    BLEPreferences::Setting("54ab9c0a-a957-410d-a8ba-6c0889e6e9f7", "wsServer", "Websocket Server IP", "192.168.0.13:3000", onWsServerChanged),
     BLEPreferences::Setting("0eed74d8-f04d-4b98-8ab6-6eb7307dc809", "ipaddress", "IP address", "-"),
   });
 

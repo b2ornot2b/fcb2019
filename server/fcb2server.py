@@ -93,7 +93,7 @@ class FCB2019Hardware(WebSocketHandler):
     def handle_footswitch(self, fs, isPressed):
         isPressed = (isPressed == 1)
         print('handle_footswitch: {} {}'.format(fs, isPressed))
-        self.broadcast('fs', fs, isPressed)
+        self.broadcast('fs', fs, isPressed, time.time())
 
     def handle_pedal_value(self, pedal, valueStr):
         pedal, value = (10+int(pedal)), int(valueStr)
