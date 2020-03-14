@@ -70,6 +70,7 @@ class BLEPreferences {
         String m_name;
         String m_value;
         SettingChangedCallback m_cb;
+        BLECharacteristic *m_pCharacteristic;
 
 
         Setting(String uuid, String name, String description, String value, SettingChangedCallback cb = NULL) :
@@ -88,6 +89,11 @@ class BLEPreferences {
           m_description = src->m_description;
           m_value = src->m_value;
           m_cb = src->m_cb;
+        }
+        BLECharacteristic * setCharacteristic(BLECharacteristic *p)
+        {
+          m_pCharacteristic = p;
+          return p;
         }
     };
 
@@ -130,20 +136,22 @@ class BLEPreferences {
 
     BLEPreferences(String ns)
     {
-      
+
       m_namespace = String(ns);
     }
+
+    std::list<Setting> m_settings;
 
     void setup(const std::list<Setting> l)
     {
 
-      
+      m_settings = std::list<Setting>(l);
       Preferences prefs;
 
       Serial.print("setup: ");
       Serial.println(m_namespace.c_str());
 
-      prefs.begin(m_namespace.c_str(), true);
+      prefs.begin(ProductName.c_str(), true);
 
 
       auto hostname = prefs.getString("hostname");
@@ -151,19 +159,22 @@ class BLEPreferences {
       {
         _init_ble_service(hostname);
       } else {
-         _init_ble_service(ProductName);
+        _init_ble_service(ProductName);
       }
-      
-      for (auto const&it : l) //(it=l.begin(); it!=l.end(); ++it)
+
+      for (auto &it : m_settings) //(it=l.begin(); it!=l.end(); ++it)
       {
         Serial.print("Setting up ");
         Serial.println(it.m_name);
-        BLECharacteristic *pCharacteristic = m_ble_service->createCharacteristic(
+        auto props = BLECharacteristic::PROPERTY_READ;
+        if (it.m_cb)
+          props |= BLECharacteristic::PROPERTY_WRITE;
+          
+        auto c = it.setCharacteristic(m_ble_service->createCharacteristic(
                                                it.m_uuid.c_str(),
-                                               BLECharacteristic::PROPERTY_READ |
-                                               BLECharacteristic::PROPERTY_WRITE
-                                             );
-        pCharacteristic->setCallbacks(new MyCallbackHandler(this, &it));
+                                               props
+                                             ));
+        c->setCallbacks(new MyCallbackHandler(this, &it));
         const char *name = it.m_name.c_str();
         const char *default_value = it.m_value.c_str();
         const char *pref_value = prefs.getString(name, default_value).c_str();
@@ -172,7 +183,7 @@ class BLEPreferences {
         Serial.print(default_value);
         Serial.print(" preference=");
         Serial.println(pref_value);
-        pCharacteristic->setValue(pref_value);
+        c->setValue(pref_value);
       }
       prefs.end();
 
@@ -182,16 +193,25 @@ class BLEPreferences {
 
     }
 
-    void save(String name, String value)
+    void save(const String name, const String value, bool update_ble=false)
     {
       Preferences prefs;
 
       Serial.println("BLEPreferences::save ");
       //Serial.println(m_namespace.c_str());
-      
+
       prefs.begin(ProductName.c_str(), false);
       prefs.putString(name.c_str(), value.c_str());
       prefs.end();
+
+      if (update_ble)
+      {
+        for (auto const&it : m_settings)
+        {
+          if (it.m_name == name)
+            it.m_pCharacteristic->setValue(value.c_str());
+        }
+      }
       Serial.println("saved");
     }
 
@@ -368,7 +388,7 @@ typedef enum {
 ws_state_t ws_state = WS_DISABLED;
 void connect_ws()
 {
-  
+
   ws_state = WS_INIT;
 }
 
@@ -505,7 +525,14 @@ uint8_t wifi_status_changed(void)
 #ifndef DISABLE_OTA
       setup_ota();
 #endif
-    WiFi.localIP();    
+      {
+        String ipaddr = String(WiFi.localIP().toString());
+        Serial.println("IP address:");
+        Serial.println(ipaddr);
+        //auto ipaddr_s = 9
+        //Serial.println(ipaddr.toString().c_str());
+        //pGlobalPrefs->save(String("ipaddress"), ipaddr, true);
+      }
 #ifndef DISABLE_WEBSOCKET
       connect_ws();
 #endif
@@ -947,8 +974,8 @@ void setup() {
     BLEPreferences::Setting("9a9f29dd-c65b-490c-9f7c-34123f2c2f7a", "hostname", "Hostname", ProductName, onWiFiSettingsChanged),
     BLEPreferences::Setting("835e92fa-a035-4383-8e8b-26377f65a815", "pedalReset", "Reset Pedal Calibration", "0", Pedals::onPedalCalibrationReset),
     //    BLEPreferences::Setting("ce3b9e47-6fbc-4a64-bf4d-545c2b4b7785", "pedalSamples", "PedalSamples", "63", Pedals::onPedalSettingsChanged),
-    BLEPreferences::Setting("54ab9c0a-a957-410d-a8ba-6c0889e6e9f7", "wsServer", "Websocket Server IP", "192.168.1.13", onWsServerChanged),
-    BLEPreferences::Setting("0eed74d8-f04d-4b98-8ab6-6eb7307dc809", "ipaddress", "IP address", "", NULL),
+    //BLEPreferences::Setting("54ab9c0a-a957-410d-a8ba-6c0889e6e9f7", "wsServer", "Websocket Server IP", "192.168.1.13", onWsServerChanged),
+    BLEPreferences::Setting("0eed74d8-f04d-4b98-8ab6-6eb7307dc809", "ipaddress", "IP address", "-"),
   });
 
   setup_display();
