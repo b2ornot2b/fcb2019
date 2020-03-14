@@ -1,5 +1,52 @@
 <html>
-    <body>
-        <h1>b2ornot2b</h1>
-    </body>
+<head>
+</head>
+<body>
+    
+<script>
+    var presets, currentPreset = {};
+currentPreset.name = null;
+currentPreset.idx = null;
+currentPreset.amp = null;
+currentPreset.fx = null;
+
+    
+var ws = new WebSocket("ws://localhost:3000/");
+var Start = Date.now();
+function millis() {
+    return Date.now() - Start;
+}
+function sendMsg(cmd, ...args) {
+    var msg = JSON.stringify({"t": millis(), "c": cmd, "a": args});
+    ws.send(msg);
+}
+ws.onopen = function(evt) {
+    console.log("onOpen", this, evt);
+};
+ws.onmessage = function(evt) {
+    console.log("onMessage", this, evt);
+    var msg = JSON.parse(evt.data);
+    console.log(msg);
+    switch (msg.c) {
+    case "FCB2.Server":
+        console.log("Server:", msg.a);
+        sendMsg("FCB2.Web", 0, 1);
+        break;
+    case "FCB2.init":
+        sendMsg("start");
+        break;
+    case "start_r":
+        presets = msg.a[0]['presets'];
+        currentPreset.amp = msg.a[0]['amp'];
+        currentPreset.name = msg.a[0]['name'];
+        currentPreset.fx = msg.a[0]['fx'];
+            currentPreset.idx = presets.findIndex((e)=>{ return (e == currentPreset.name) });
+        break;
+    }
+};
+ws.onclose = function(evt) {
+    console.log("onClose", this, evt);
+};
+</script>
+</body>
 </html>

@@ -8,6 +8,8 @@
 //#define DISABLE_WEBSOCKET
 //#define DEBUG_WEBSOCKET
 
+String ProductName("fcb2.019");
+
 #ifndef DISABLE_OTA
 #include <ArduinoOTA.h>
 #endif
@@ -15,6 +17,7 @@
 #include <ESPmDNS.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
+#include <ArduinoJson.h>
 
 #include <WString.h>
 
@@ -46,13 +49,14 @@ WiFiMulti WiFiMulti;
 
 class BLEPreferences {
   private:
+    String m_namespace;
     const char * serviceUUID = "d3a591b7-a053-4db9-bcf3-e3fb035c40d4";
     BLEServer * m_ble_server;
     BLEService * m_ble_service;
 
-    void _init_ble_service(void)
+    void _init_ble_service(String &blename)
     {
-      BLEDevice::init("b2"); // nspace.c_str());
+      BLEDevice::init(blename.c_str()); // nspace.c_str());
       m_ble_server = BLEDevice::createServer();
       m_ble_service = m_ble_server->createService(serviceUUID);
     }
@@ -126,17 +130,30 @@ class BLEPreferences {
 
     BLEPreferences(String ns)
     {
-      // TODO: Handle namespace here
+      
+      m_namespace = String(ns);
     }
 
     void setup(const std::list<Setting> l)
     {
 
-      _init_ble_service();
+      
       Preferences prefs;
 
-      prefs.begin("b2", true);
+      Serial.print("setup: ");
+      Serial.println(m_namespace.c_str());
 
+      prefs.begin(m_namespace.c_str(), true);
+
+
+      auto hostname = prefs.getString("hostname");
+      if (hostname.length())
+      {
+        _init_ble_service(hostname);
+      } else {
+         _init_ble_service(ProductName);
+      }
+      
       for (auto const&it : l) //(it=l.begin(); it!=l.end(); ++it)
       {
         Serial.print("Setting up ");
@@ -149,11 +166,13 @@ class BLEPreferences {
         pCharacteristic->setCallbacks(new MyCallbackHandler(this, &it));
         const char *name = it.m_name.c_str();
         const char *default_value = it.m_value.c_str();
-        const char *value = prefs.getString(name, default_value).c_str();
-        Serial.println(name);
-        Serial.println(default_value);
-        Serial.println(value);
-        pCharacteristic->setValue(value);
+        const char *pref_value = prefs.getString(name, default_value).c_str();
+        //Serial.println(name);
+        Serial.print("default=");
+        Serial.print(default_value);
+        Serial.print(" preference=");
+        Serial.println(pref_value);
+        pCharacteristic->setValue(pref_value);
       }
       prefs.end();
 
@@ -167,7 +186,10 @@ class BLEPreferences {
     {
       Preferences prefs;
 
-      prefs.begin("b2", false);
+      Serial.println("BLEPreferences::save ");
+      //Serial.println(m_namespace.c_str());
+      
+      prefs.begin(ProductName.c_str(), false);
       prefs.putString(name.c_str(), value.c_str());
       prefs.end();
       Serial.println("saved");
@@ -177,7 +199,7 @@ class BLEPreferences {
     {
       Preferences prefs;
 
-      prefs.begin("b2", true);
+      prefs.begin(ProductName.c_str(), true);
       String ret(prefs.getString(name.c_str()));
       prefs.end();
       Serial.print("getValue ");
@@ -190,6 +212,7 @@ class BLEPreferences {
 };
 
 
+BLEPreferences *pGlobalPrefs = NULL;
 
 #ifndef DISABLE_OTA
 void setup_ota(void)
@@ -271,9 +294,15 @@ const byte SX1509_I2C_SCL = 16;
 
 
 bool footswitchesPressed = false;
-void IRAM_ATTR button(void) {
+void IRAM_ATTR switchesInt(void) {
   footswitchesPressed = true;
 }
+
+uint32_t blackButtonPressed = 0;
+void IRAM_ATTR blackButton(void) {
+  blackButtonPressed = millis();
+}
+
 
 void setup_sx1509s(void)
 {
@@ -311,10 +340,13 @@ void setup_sx1509s(void)
 #endif
 
   pinMode(21, INPUT_PULLUP);
-  attachInterrupt(21, button, FALLING);
+  attachInterrupt(21, switchesInt, FALLING);
 
   OLEDprint("switches done.");
 #endif
+
+  pinMode(0, INPUT_PULLUP);
+  attachInterrupt(0, blackButton, FALLING);
 }
 
 #ifndef DISABLE_WIFI
@@ -336,6 +368,7 @@ typedef enum {
 ws_state_t ws_state = WS_DISABLED;
 void connect_ws()
 {
+  
   ws_state = WS_INIT;
 }
 
@@ -380,10 +413,10 @@ void ws_loop()
       if (millis() < connectAt)
         break;
       char header[100];
-//      client.setExtraHeaders(header, "Host: %s:%d", websockets_server_host, websockets_server_port);
+      //      client.setExtraHeaders(header, "Host: %s:%d", websockets_server_host, websockets_server_port);
       if (client.connect(websockets_server_host, websockets_server_port, "/"))
       {
-        
+
         //client.send("FCB2.019 init");
         wsSendMsg("FCB2.019", 0, 1);
 
@@ -399,7 +432,7 @@ void ws_loop()
       break;
 
     // Send a message
-    
+
     // Send a ping
     //client.ping();
     case WS_CONNECTED:
@@ -419,6 +452,18 @@ void ws_loop()
       break;
   }
 }
+
+bool onWsServerChanged(BLEPreferences *prefs, String name, String &newValue, String oldValue, bool &needReboot)
+{
+  Serial.print("onWsServerChanged:");
+  Serial.println(name);
+  Serial.println(newValue);
+  Serial.println(oldValue);
+  needReboot = true;
+  return true;
+}
+
+
 
 typedef enum {
   FC_INIT,
@@ -460,6 +505,7 @@ uint8_t wifi_status_changed(void)
 #ifndef DISABLE_OTA
       setup_ota();
 #endif
+    WiFi.localIP();    
 #ifndef DISABLE_WEBSOCKET
       connect_ws();
 #endif
@@ -534,6 +580,17 @@ class Pedals
         calibStats[pedalIdx].add(avgVal);
         if ((maxVal - minVal) > 2000)
         {
+          if (blackButtonPressed)
+          {
+            if (val < 1500)
+            {
+              minVal = val;
+            }
+            else if (val > 2000)
+            {
+              maxVal = val;
+            }
+          }
           uint16_t calibVal = map(avgVal, minVal, maxVal, 0, 1024);
           if (abs(prevVal[pedalIdx] - calibVal) > sensitivity)
           {
@@ -748,11 +805,11 @@ Pedals pedals;
 char wsmsg[100];
 void wsSendMsg(const char *msgType, uint16_t arg1, uint16_t arg2)
 {
-  sprintf(wsmsg, "%ld %s %d %d", millis(), msgType, arg1, arg2);
+  sprintf(wsmsg, "{\"t\":%ld,\"c\":\"%s\",\"a\":[%d,%d]}", millis(), msgType, arg1, arg2);
   client.send(wsmsg);
 }
 
-void api_reset(std::vector<char *> args)
+void api_reset(std::vector<const char *> args)
 {
   Serial.println("api_reset");
   ESP.restart();
@@ -773,7 +830,7 @@ byte ledPinMap[] = {
   14, // Expr 1
   13, // Expr 2
 };
-void api_led(std::vector<char *> args)
+void api_led(std::vector<const char *> args)
 {
   Serial.println("api_led");
   byte pin = ledPinMap[atoi(args[1])];
@@ -798,7 +855,7 @@ void api_led(std::vector<char *> args)
 
 }
 
-typedef void (*ws_api_fn_t)(std::vector<char *> args);
+typedef void (*ws_api_fn_t)(std::vector<const char *> args);
 typedef struct {
   const char *api;
   ws_api_fn_t callback;
@@ -810,10 +867,11 @@ ws_api_t api_handlers[] = {
   { NULL, NULL }
 };
 
+StaticJsonDocument<300> JSONDoc;
 void onMessageCallback(websockets::WebsocketsMessage message) {
   Serial.print("Got Message: ");
   Serial.println(message.data());
-
+#if 0
   char *t, *msg = strdup(message.data().c_str());
   std::vector<char *> args;
   while ((t = strtok_r(msg, " \n", &msg)) != NULL)
@@ -832,6 +890,23 @@ void onMessageCallback(websockets::WebsocketsMessage message) {
     }
   }
   free(msg);
+#else
+  deserializeJson(JSONDoc, message.data());
+
+  uint32_t timestamp = JSONDoc["t"];
+  const char * cmd = JSONDoc["c"];
+  std::vector<const char *> args;
+  for (JsonVariant v : JSONDoc["a"].as<JsonArray>())
+    args.push_back(v.as<String>().c_str());
+  for (byte i = 0; api_handlers[i].api; i++)
+  {
+    if (!strncmp(api_handlers[i].api, cmd, strlen(api_handlers[i].api)))
+    {
+      api_handlers[i].callback(args);
+      break;
+    }
+  }
+#endif
 }
 
 #ifndef  DISABLE_PEDALS
@@ -864,13 +939,16 @@ void setup() {
 
   pinMode(ledPin, OUTPUT);
 
-  BLEPreferences xprefs("fcb2019");
+  BLEPreferences xprefs(ProductName);
+  pGlobalPrefs = &xprefs;
   xprefs.setup({
     BLEPreferences::Setting("edabdb60-b8cc-4869-9368-9c5f11f0155e", "ssid", "WiFi SSID", "b2", onWiFiSettingsChanged),
     BLEPreferences::Setting("03f18da6-427c-422c-acc5-95966229efa0", "password", "WiFi Password", "hello", onWiFiSettingsChanged),
-    BLEPreferences::Setting("9a9f29dd-c65b-490c-9f7c-34123f2c2f7a", "hostname", "Hostname", "fcb2019", onWiFiSettingsChanged),
+    BLEPreferences::Setting("9a9f29dd-c65b-490c-9f7c-34123f2c2f7a", "hostname", "Hostname", ProductName, onWiFiSettingsChanged),
     BLEPreferences::Setting("835e92fa-a035-4383-8e8b-26377f65a815", "pedalReset", "Reset Pedal Calibration", "0", Pedals::onPedalCalibrationReset),
     //    BLEPreferences::Setting("ce3b9e47-6fbc-4a64-bf4d-545c2b4b7785", "pedalSamples", "PedalSamples", "63", Pedals::onPedalSettingsChanged),
+    BLEPreferences::Setting("54ab9c0a-a957-410d-a8ba-6c0889e6e9f7", "wsServer", "Websocket Server IP", "192.168.1.13", onWsServerChanged),
+    BLEPreferences::Setting("0eed74d8-f04d-4b98-8ab6-6eb7307dc809", "ipaddress", "IP address", "", NULL),
   });
 
   setup_display();
@@ -910,4 +988,13 @@ void loop() {
 #ifndef DISABLE_WEBSOCKETS
   ws_loop();
 #endif
+
+  if (blackButtonPressed)
+  {
+    if ((millis() - blackButtonPressed) > 100)
+    {
+      Serial.println("blackButton pressed");
+      blackButtonPressed = 0;
+    }
+  }
 }
