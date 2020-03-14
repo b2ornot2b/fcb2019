@@ -12,6 +12,14 @@ import json
 
 from fendermustang import FenderMustang
 
+import mido
+mido.set_backend('mido.backends.rtmidi')
+pc = mido.Message('program_change')
+cc = mido.Message('control_change')
+controller_port = sys.argv[1]
+midi_channel = pc.channel = cc.channel = int(sys.argv[2]) - 1
+outport = mido.open_output( controller_port )
+
 SERVER_MAJOR, SERVER_MINOR = 0, 1
 
 START_TIME = int(time.time() * 1000)
@@ -94,6 +102,9 @@ class FCB2019Hardware(WebSocketHandler):
         isPressed = (isPressed == 1)
         print('handle_footswitch: {} {}'.format(fs, isPressed))
         self.broadcast('fs', fs, isPressed, time.time())
+
+        pc.program = random.randint(30)
+        outport.send(pc)
 
     def handle_pedal_value(self, pedal, valueStr):
         pedal, value = (10+int(pedal)), int(valueStr)
