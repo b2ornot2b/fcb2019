@@ -1,4 +1,4 @@
-gevent==1.4.0
+gevent==23.9.1
 gevent-websocket==0.10.1
 greenlet==0.4.15
 mido==1.2.9
